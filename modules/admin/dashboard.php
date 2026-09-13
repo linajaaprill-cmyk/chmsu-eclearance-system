@@ -1,3 +1,74 @@
+<?php
+require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../includes/functions.php';
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (!isset($_SESSION['admin'])) {
+    header("Location: ../index.php");
+    exit;
+}
+
+$admin = $_SESSION['admin'];
+$adminSection = 'dashboard';
+$error = '';
+$success = '';
+
+// Safe count helper
+function safeCount($conn, $sql) {
+    $res = $conn->query($sql);
+    if (!$res) return 0;
+    $row = $res->fetch_assoc();
+    return (int)($row['c'] ?? 0);
+}
+
+$totalStudents      = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_user_accounts");
+$totalOffices       = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_offices");
+$totalCourses       = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_courses");
+$totalSections      = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_sections");
+$totalRequirements  = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_requirements");
+$totalSubmissions   = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_submissions");
+$pendingSubmissions  = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_submissions WHERE chmsu_status='Pending'");
+$approvedSubmissions = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_submissions WHERE chmsu_status='Approved'");
+$declinedSubmissions = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_submissions WHERE chmsu_status='Declined'");
+$totalAdminAccounts  = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_admin_users");
+$totalOfficeAccounts = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_auth_roles");
+$totalSchoolYears    = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_school_years");
+$totalSemesters      = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_semesters");
+$activityLast7Days   = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_activity_log WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+$totalStudentsMaster = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_students_master");
+$totalArchived       = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_students_master WHERE is_archived=1");
+
+// Current school year
+$currentSchoolYear = ['school_year' => 'N/A'];
+$r = $conn->query("SELECT school_year FROM chmsu_school_years WHERE is_current=1 LIMIT 1");
+if ($r && $row = $r->fetch_assoc()) $currentSchoolYear = $row;
+
+// Current semester
+$currentSemester = ['semester_name' => 'N/A'];
+$r = $conn->query("SELECT semester_name FROM chmsu_semesters WHERE is_current=1 LIMIT 1");
+if ($r && $row = $r->fetch_assoc()) $currentSemester = $row;
+
+// Admin info + has_email
+$has_email = false;
+$admin_info = ['email' => ''];
+$r = $conn->query("SELECT email, app_password FROM chmsu_admin_users WHERE username='" . $conn->real_escape_string($admin) . "' LIMIT 1");
+if ($r && $row = $r->fetch_assoc()) {
+    $admin_info = $row;
+    if (!empty($row['email']) && !empty($row['app_password'])) $has_email = true;
+}
+
+// Data for charts
+$officeRequirements = [];
+$r = $conn->query("SELECT chmsu_office AS office, COUNT(*) AS count FROM chmsu_requirements GROUP BY chmsu_office");
+if ($r) while ($row = $r->fetch_assoc()) $officeRequirements[] = $row;
+
+$submissionsByMonth = [];
+$r = $conn->query("SELECT DATE_FORMAT(submitted_at, '%b %Y') AS month, COUNT(*) AS count FROM chmsu_submissions GROUP BY YEAR(submitted_at), MONTH(submitted_at) ORDER BY submitted_at ASC LIMIT 6");
+if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
