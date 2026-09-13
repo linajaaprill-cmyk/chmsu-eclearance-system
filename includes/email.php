@@ -15,12 +15,12 @@ use PHPMailer\PHPMailer\Exception;
 // ============================================
 // CONFIGURATION
 // ============================================
-define('SMTP_HOST', getenv('MAIL_HOST') ?: 'smtp.gmail.com');
-define('SMTP_PORT', getenv('MAIL_PORT') ?: 587);
-define('SMTP_USER', getenv('MAIL_USERNAME'));
-define('SMTP_PASS', getenv('MAIL_PASSWORD'));
-define('SMTP_FROM', getenv('MAIL_FROM') ?: getenv('MAIL_USERNAME'));
-define('SMTP_FROM_NAME', getenv('MAIL_FROM_NAME') ?: 'CHMSU E-Clearance System');
+define('SMTP_HOST', 'smtp.gmail.com');
+define('SMTP_PORT', 587);
+define('SMTP_USER', 'linajaaprill@gmail.com');
+define('SMTP_PASS', 'lniygbkmrpgbhcbk');
+define('SMTP_FROM', 'linajaaprill@gmail.com');
+define('SMTP_FROM_NAME', 'CHMSU E-Clearance System');
 
 // ============================================
 // SEND EMAIL FUNCTION
@@ -162,5 +162,51 @@ function sendSubmissionNotification($office_email, $office_name, $student_name, 
     </body>
     </html>";
     return sendEmail($office_email, $office_name, $subject, $body);
+}
+
+// ============================================
+// ADMIN LOGIN NOTIFICATION - NEWLY ADDED
+// ============================================
+function sendAdminLoginNotification($admin_email, $admin_name, $ip_address = null) {
+    if (empty($admin_email)) return false;
+
+    $subject = "🔐 New Admin Login - CHMSU E-Clearance System";
+    $time = date('F d, Y h:i A');
+    $ip_display = $ip_address ?: ($_SERVER['REMOTE_ADDR'] ?? 'Unknown');
+
+    $body = "<html>
+    <head>
+        <style>
+            body { font-family: 'Times New Roman', Times, serif; color: #333; }
+            .container { max-width: 500px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; }
+            .header { background: #1b4d3e; color: white; padding: 15px; text-align: center; }
+            .content { padding: 20px; }
+            .info-box { background: #f5f5f5; padding: 12px; margin: 10px 0; border-left: 3px solid #1b4d3e; }
+            .footer { text-align: center; font-size: 11px; color: #888; border-top: 1px solid #ddd; padding-top: 10px; }
+            .warning { color: #e74c3c; font-size: 12px; margin-top: 15px; }
+        </style>
+    </head>
+    <body>
+        <div class='container'>
+            <div class='header'>
+                <h2>🔐 New Admin Login</h2>
+            </div>
+            <div class='content'>
+                <p>Hello <strong>" . htmlspecialchars($admin_name) . "</strong>,</p>
+                <p>A new login to your CHMSU E-Clearance admin account was detected.</p>
+                <div class='info-box'>
+                    <strong>Time:</strong> " . htmlspecialchars($time) . "<br>
+                    <strong>IP Address:</strong> " . htmlspecialchars($ip_display) . "
+                </div>
+                <p class='warning'>⚠️ If this wasn't you, please change your password immediately.</p>
+            </div>
+            <div class='footer'>
+                <p>CHMSU E-Clearance System &bull; This is an automated notification.</p>
+            </div>
+        </div>
+    </body>
+    </html>";
+
+    return sendEmail($admin_email, $admin_name, $subject, $body, true);
 }
 ?>
