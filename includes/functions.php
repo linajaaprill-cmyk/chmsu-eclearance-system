@@ -558,4 +558,68 @@ function exportComprehensiveReport($conn, $filename, $user_role = 'admin') {
     echo '</body></html>';
     exit;
 }
+
+// Function to get student's current year level from masterlist
+function getStudentYear($conn, $student_id) {
+    $result = $conn->query("SELECT chmsu_year FROM chmsu_students_master WHERE chmsu_student_id = '$student_id'");
+    if($result && $result->num_rows > 0) {
+        return $result->fetch_assoc()['chmsu_year'];
+    }
+    return '1';
+}
+
+// ============================================
+// CHAT FUNCTIONS
+// ============================================
+
+function getChatUnreadCount($conn, $user_type, $user_id) {
+    if ($user_type == 'office') {
+        $count = $conn->query("SELECT SUM(office_unread) as total FROM chmsu_chat_conversations WHERE office_name='$user_id'")->fetch_assoc()['total'];
+        return $count ?: 0;
+    } elseif ($user_type == 'student') {
+        $count = $conn->query("SELECT SUM(student_unread) as total FROM chmsu_chat_conversations WHERE student_id='$user_id'")->fetch_assoc()['total'];
+        return $count ?: 0;
+    }
+    return 0;
+}
+
+function getChatbotResponse($message) {
+    global $conn;
+    $message = strtolower(trim($message));
+    
+    // Check for exact matches first
+    $faq = $conn->query("SELECT * FROM chmsu_chatbot_faq WHERE LOWER(keyword) = '$message' AND is_active = 1 LIMIT 1");
+    if ($faq && $faq->num_rows > 0) {
+        return $faq->fetch_assoc()['response'];
+    }
+    
+    // Check for partial matches
+    $faq = $conn->query("SELECT * FROM chmsu_chatbot_faq WHERE LOWER(keyword) LIKE '%$message%' AND is_active = 1 LIMIT 1");
+    if ($faq && $faq->num_rows > 0) {
+        return $faq->fetch_assoc()['response'];
+    }
+    
+    // Check for keyword in message
+    $all_faq = $conn->query("SELECT * FROM chmsu_chatbot_faq WHERE is_active = 1");
+    while ($row = $all_faq->fetch_assoc()) {
+        if (strpos($message, strtolower($row['keyword'])) !== false) {
+            return $row['response'];
+        }
+    }
+    
+    // Fallback reply
+    return "Sorry, I don't understand that. Please try asking about:\n- Clearance status\n- Requirements\n- How to submit\n- Deadlines\n- Office information\n\nType 'help' for more options.";
+}
+
+function getQuickReplies() {
+    return [
+        ['text' => 'Hello', 'value' => 'hello'],
+        ['text' => 'Clearance Status', 'value' => 'clearance status'],
+        ['text' => 'Requirements', 'value' => 'requirements'],
+        ['text' => 'How to Submit', 'value' => 'how to submit'],
+        ['text' => 'Deadlines', 'value' => 'deadlines'],
+        ['text' => 'Help', 'value' => 'help'],
+        ['text' => 'Thank You', 'value' => 'thank you']
+    ];
+}
 ?>

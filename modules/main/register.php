@@ -2,11 +2,8 @@
 // Check if admin already exists
 $adminExists = $conn->query("SELECT * FROM chmsu_admin_users")->num_rows > 0;
 
-// Get available offices (not yet registered)
-$availableOffices = $conn->query("SELECT o.office_name FROM chmsu_offices o 
-                                   LEFT JOIN chmsu_auth_roles ar ON o.office_name = ar.chmsu_role 
-                                   WHERE ar.chmsu_role IS NULL 
-                                   ORDER BY o.office_name");
+// Get ALL offices from database (shows all offices added in admin CRUD)
+$availableOffices = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY office_name");
 ?>
 
 <!DOCTYPE html>
@@ -350,7 +347,7 @@ $availableOffices = $conn->query("SELECT o.office_name FROM chmsu_offices o
                             </option>
                         <?php endwhile; ?>
                     </select>
-                    <small class="hint-text">Only offices that are not yet registered will appear here</small>
+                    <small class="hint-text">Select the office you are registering for</small>
                 </div>
                 <div class="form-group">
                     <label>Username (for login)</label>

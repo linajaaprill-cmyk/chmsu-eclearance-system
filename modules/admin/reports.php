@@ -1,133 +1,396 @@
 <?php
+require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../includes/functions.php';
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (!isset($_SESSION['admin'])) {
+    header("Location: ../index.php");
+    exit;
+}
+
 $admin = $_SESSION['admin'];
 $adminSection = 'reports';
+$error = '';
+$success = '';
+$storage_used = getTotalUploadSize();
+$storage_percent = min(($storage_used / (100 * 1024 * 1024)) * 100, 100);
 
-// Handle comprehensive report export
-if (isset($_GET['export']) && $_GET['export'] == 'comprehensive') {
-    $filename = 'CHMSU_Comprehensive_System_Report_' . date('Ymd_His');
-    exportComprehensiveReport($conn, $filename, 'admin');
+// Get admin data
+$totalCourses = $conn->query("SELECT COUNT(*) as c FROM chmsu_courses")->fetch_assoc()['c'];
+$totalOffices = $conn->query("SELECT COUNT(*) as c FROM chmsu_offices")->fetch_assoc()['c'];
+$totalSections = $conn->query("SELECT COUNT(*) as c FROM chmsu_course_sections")->fetch_assoc()['c'];
+$totalSchoolYears = $conn->query("SELECT COUNT(*) as c FROM chmsu_school_years")->fetch_assoc()['c'];
+$totalSemesters = $conn->query("SELECT COUNT(*) as c FROM chmsu_semesters")->fetch_assoc()['c'];
+$totalAdminAccounts = $conn->query("SELECT COUNT(*) as c FROM chmsu_admin_users")->fetch_assoc()['c'];
+$totalOfficeAccounts = $conn->query("SELECT COUNT(*) as c FROM chmsu_auth_roles")->fetch_assoc()['c'];
+
+$currentSchoolYear = $conn->query("SELECT school_year FROM chmsu_school_years WHERE is_current = 1")->fetch_assoc();
+$currentSemester = $conn->query("SELECT semester_name FROM chmsu_semesters WHERE is_current = 1")->fetch_assoc();
+
+// Get all data
+$courses_data = [];
+$courses = $conn->query("SELECT course_code, course_name FROM chmsu_courses ORDER BY course_code");
+while ($row = $courses->fetch_assoc()) {
+    $courses_data[] = $row;
 }
 
-// Handle individual report exports
-if (isset($_GET['export_report']) && isset($_GET['type'])) {
-    $export_type = $_GET['export_report'];
-    $report_type = $_GET['type'];
-    $report_title = '';
-    $subtitle = '';
+$offices_data = [];
+$offices = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY office_name");
+while ($row = $offices->fetch_assoc()) {
+    $offices_data[] = $row;
+}
+
+$sections_data = [];
+$sections = $conn->query("SELECT course, year, section_name FROM chmsu_course_sections ORDER BY course, year, section_name");
+while ($row = $sections->fetch_assoc()) {
+    $sections_data[] = $row;
+}
+
+$school_years_data = [];
+$schoolYears = $conn->query("SELECT school_year, is_current FROM chmsu_school_years ORDER BY id DESC");
+while ($row = $schoolYears->fetch_assoc()) {
+    $school_years_data[] = $row;
+}
+
+$semesters_data = [];
+$semesters = $conn->query("SELECT semester_name, semester_code, is_current FROM chmsu_semesters ORDER BY id DESC");
+while ($row = $semesters->fetch_assoc()) {
+    $semesters_data[] = $row;
+}
+
+// ============================================
+// EXCEL EXPORT
+// ============================================
+if (isset($_GET['export_type']) && $_GET['export_type'] == 'excel') {
+    $filename = 'Admin_System_Management_Report_' . date('Ymd');
+    header('Content-Type: application/vnd.ms-excel');
+    header('Content-Disposition: attachment; filename="' . $filename . '.xls"');
     
-    if ($report_type == 'activity') {
-        $logs = $conn->query("SELECT user_id as 'User', user_type as 'Type', action as 'Action', ip_address as 'IP Address', DATE_FORMAT(created_at, '%M %d, %Y %h:%i %p') as 'Date/Time' FROM chmsu_activity_log ORDER BY created_at DESC");
-        $data = [];
-        while ($row = $logs->fetch_assoc()) {
-            $data[] = $row;
-        }
-        $headers = ['User', 'Type', 'Action', 'IP Address', 'Date/Time'];
-        $report_title = 'SYSTEM ACTIVITY LOG REPORT';
-        $subtitle = 'Complete record of all user activities in the system';
-        $filename = 'System_Activity_Report_' . date('Ymd');
-        
-        if ($export_type == 'excel') {
-            exportToExcelReport($data, $filename, $headers, $report_title, $subtitle);
-        } elseif ($export_type == 'word') {
-            exportToWordReport($data, $filename, $headers, $report_title, $subtitle);
-        }
+    $html = '<html><head><meta charset="UTF-8"><title>' . $filename . '</title>';
+    $html .= '<style>
+        body { font-family: "Times New Roman", Times, serif; margin: 20px; }
+        .header { text-align: center; border-bottom: 2px solid #1b4d3e; padding-bottom: 15px; margin-bottom: 20px; }
+        .university-name { font-size: 18pt; font-weight: bold; color: #1b4d3e; }
+        .report-title { font-size: 16pt; font-weight: bold; text-align: center; margin: 20px 0; }
+        .section-title { font-size: 14pt; font-weight: bold; background: #1b4d3e; color: white; padding: 8px; margin-top: 20px; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th { background: #1b4d3e; color: white; padding: 6px 8px; border: 1px solid #2d6a4f; text-align: left; }
+        td { padding: 5px 8px; border: 1px solid #ddd; }
+        .footer { text-align: center; margin-top: 30px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 10pt; color: #888; }
+        .summary-table td { background: #f5f5f5; }
+    </style>';
+    $html .= '</head><body>';
+    
+    $html .= '<div class="header">';
+    $html .= '<div class="university-name">CARLOS HILADO MEMORIAL STATE UNIVERSITY</div>';
+    $html .= '<div style="font-size: 11pt; color: #555;">Talisay City, Negros Occidental, Philippines</div>';
+    $html .= '<div style="font-size: 10pt; color: #666;">E-Clearance System - Official Report</div>';
+    $html .= '</div>';
+    
+    $html .= '<div class="report-title">ADMIN SYSTEM MANAGEMENT REPORT</div>';
+    $html .= '<p><strong>Date Generated:</strong> ' . date('F d, Y') . ' | <strong>Generated by:</strong> System Administrator</p>';
+    
+    // SECTION 1
+    $html .= '<div class="section-title">I. SYSTEM SUMMARY</div>';
+    $html .= '<table class="summary-table">';
+    $html .= '<tr><th>Metric</th><th>Value</th></tr>';
+    $html .= '<tr><td>Total Courses</td><td>' . $totalCourses . '</td></tr>';
+    $html .= '<tr><td>Total Offices</td><td>' . $totalOffices . '</td></tr>';
+    $html .= '<tr><td>Total Sections</td><td>' . $totalSections . '</td></tr>';
+    $html .= '<tr><td>Total School Years</td><td>' . $totalSchoolYears . '</td></tr>';
+    $html .= '<tr><td>Total Semesters</td><td>' . $totalSemesters . '</td></tr>';
+    $html .= '<tr><td>Admin Accounts</td><td>' . $totalAdminAccounts . '</td></tr>';
+    $html .= '<tr><td>Office Accounts</td><td>' . $totalOfficeAccounts . '</td></tr>';
+    $html .= '<tr><td>Current School Year</td><td>' . ($currentSchoolYear ? $currentSchoolYear['school_year'] : 'N/A') . '</td></tr>';
+    $html .= '<tr><td>Current Semester</td><td>' . ($currentSemester ? $currentSemester['semester_name'] : 'N/A') . '</td></tr>';
+    $html .= '</table>';
+    
+    // SECTION 2
+    $html .= '<div class="section-title">II. COURSES LIST (' . count($courses_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>Course Code</th><th>Course Name</th></tr>';
+    $i = 1;
+    foreach ($courses_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['course_code']) . '</td><td>' . htmlspecialchars($row['course_name']) . '</td></tr>';
     }
-    elseif ($report_type == 'users') {
-        $students = $conn->query("SELECT chmsu_student_id as 'Student ID', chmsu_name as 'Student Name', chmsu_course as 'Course', chmsu_year as 'Year Level', chmsu_section as 'Section', DATE_FORMAT(chmsu_created_at, '%M %d, %Y') as 'Registered Date' FROM chmsu_user_accounts ORDER BY chmsu_course, chmsu_year, chmsu_section");
-        $data = [];
-        while ($row = $students->fetch_assoc()) {
-            $data[] = $row;
-        }
-        $headers = ['Student ID', 'Student Name', 'Course', 'Year Level', 'Section', 'Registered Date'];
-        $report_title = 'STUDENT USER ACCOUNTS REPORT';
-        $subtitle = 'List of all registered student accounts in the E-Clearance System';
-        $filename = 'Student_Accounts_Report_' . date('Ymd');
-        
-        if ($export_type == 'excel') {
-            exportToExcelReport($data, $filename, $headers, $report_title, $subtitle);
-        } elseif ($export_type == 'word') {
-            exportToWordReport($data, $filename, $headers, $report_title, $subtitle);
-        }
+    $html .= '</table>';
+    
+    // SECTION 3
+    $html .= '<div class="section-title">III. OFFICES LIST (' . count($offices_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>Office Name</th></tr>';
+    $i = 1;
+    foreach ($offices_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['office_name']) . '</td></tr>';
     }
-    elseif ($report_type == 'clearance') {
-        $totalOffices = $conn->query("SELECT COUNT(*) as c FROM chmsu_offices")->fetch_assoc()['c'];
-        $students = $conn->query("SELECT s.chmsu_student_id as 'Student ID', s.chmsu_name as 'Student Name', s.chmsu_course as 'Course', s.chmsu_year as 'Year', s.chmsu_section as 'Section',
-                                  (SELECT COUNT(DISTINCT r.chmsu_office) FROM chmsu_submissions sub 
-                                   JOIN chmsu_requirements r ON sub.chmsu_requirement_id = r.chmsu_id 
-                                   WHERE sub.chmsu_student_id = s.chmsu_student_id AND sub.chmsu_status = 'Approved') as approved_count
-                                  FROM chmsu_user_accounts s ORDER BY s.chmsu_course, s.chmsu_year, s.chmsu_section");
-        $data = [];
-        while ($row = $students->fetch_assoc()) {
-            $status = ($row['approved_count'] >= $totalOffices) ? 'COMPLETE' : 'IN PROGRESS';
-            $data[] = [
-                $row['Student ID'],
-                $row['Student Name'],
-                $row['Course'],
-                $row['Year'],
-                $row['Section'],
-                $row['approved_count'] . '/' . $totalOffices,
-                $status
-            ];
-        }
-        $headers = ['Student ID', 'Student Name', 'Course', 'Year', 'Section', 'Progress', 'Status'];
-        $report_title = 'CLEARANCE STATUS REPORT';
-        $subtitle = 'Student clearance completion status across all offices';
-        $filename = 'Clearance_Status_Report_' . date('Ymd');
-        
-        if ($export_type == 'excel') {
-            exportToExcelReport($data, $filename, $headers, $report_title, $subtitle);
-        } elseif ($export_type == 'word') {
-            exportToWordReport($data, $filename, $headers, $report_title, $subtitle);
-        }
+    $html .= '</table>';
+    
+    // SECTION 4
+    $html .= '<div class="section-title">IV. SECTIONS LIST (' . count($sections_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>Course</th><th>Year Level</th><th>Section Name</th></tr>';
+    $i = 1;
+    foreach ($sections_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['course']) . '</td><td>' . $row['year'] . 'th Year</td><td>' . htmlspecialchars($row['section_name']) . '</td></tr>';
     }
-    elseif ($report_type == 'office_performance') {
-        $offices = $conn->query("SELECT o.office_name as 'Office Name', 
-                                 (SELECT COUNT(*) FROM chmsu_requirements r WHERE r.chmsu_office = o.office_name) as 'Requirements',
-                                 (SELECT COUNT(*) FROM chmsu_submissions s JOIN chmsu_requirements r ON s.chmsu_requirement_id = r.chmsu_id WHERE r.chmsu_office = o.office_name) as 'Submissions',
-                                 (SELECT COUNT(*) FROM chmsu_submissions s JOIN chmsu_requirements r ON s.chmsu_requirement_id = r.chmsu_id WHERE r.chmsu_office = o.office_name AND s.chmsu_status = 'Approved') as 'Approved',
-                                 (SELECT COUNT(*) FROM chmsu_submissions s JOIN chmsu_requirements r ON s.chmsu_requirement_id = r.chmsu_id WHERE r.chmsu_office = o.office_name AND s.chmsu_status = 'Declined') as 'Declined'
-                                 FROM chmsu_offices o ORDER BY o.office_name");
-        $data = [];
-        while ($row = $offices->fetch_assoc()) {
-            $approval_rate = ($row['Submissions'] > 0) ? round(($row['Approved'] / $row['Submissions']) * 100, 2) . '%' : '0%';
-            $data[] = [
-                $row['Office Name'],
-                $row['Requirements'],
-                $row['Submissions'],
-                $row['Approved'],
-                $row['Declined'],
-                $approval_rate
-            ];
-        }
-        $headers = ['Office Name', 'Requirements', 'Submissions', 'Approved', 'Declined', 'Approval Rate'];
-        $report_title = 'OFFICE PERFORMANCE REPORT';
-        $subtitle = 'Performance metrics for each office in the clearance process';
-        $filename = 'Office_Performance_Report_' . date('Ymd');
-        
-        if ($export_type == 'excel') {
-            exportToExcelReport($data, $filename, $headers, $report_title, $subtitle);
-        } elseif ($export_type == 'word') {
-            exportToWordReport($data, $filename, $headers, $report_title, $subtitle);
-        }
+    $html .= '</table>';
+    
+    // SECTION 5
+    $html .= '<div class="section-title">V. SCHOOL YEARS LIST (' . count($school_years_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>School Year</th><th>Status</th></tr>';
+    $i = 1;
+    foreach ($school_years_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['school_year']) . '</td><td>' . ($row['is_current'] ? 'Current' : '') . '</td></tr>';
     }
-    elseif ($report_type == 'requirements') {
-        $requirements = $conn->query("SELECT chmsu_title as 'Requirement Title', chmsu_office as 'Office', chmsu_course as 'Course', chmsu_year as 'Year', chmsu_section as 'Section', IF(chmsu_deadline IS NOT NULL, DATE_FORMAT(chmsu_deadline, '%M %d, %Y %h:%i %p'), 'No Deadline') as 'Deadline', chmsu_created_at as 'Date Created' FROM chmsu_requirements ORDER BY chmsu_created_at DESC");
-        $data = [];
-        while ($row = $requirements->fetch_assoc()) {
-            $data[] = $row;
-        }
-        $headers = ['Requirement Title', 'Office', 'Course', 'Year', 'Section', 'Deadline', 'Date Created'];
-        $report_title = 'REQUIREMENTS REPORT';
-        $subtitle = 'List of all clearance requirements in the system';
-        $filename = 'Requirements_Report_' . date('Ymd');
-        
-        if ($export_type == 'excel') {
-            exportToExcelReport($data, $filename, $headers, $report_title, $subtitle);
-        } elseif ($export_type == 'word') {
-            exportToWordReport($data, $filename, $headers, $report_title, $subtitle);
-        }
+    $html .= '</table>';
+    
+    // SECTION 6
+    $html .= '<div class="section-title">VI. SEMESTERS LIST (' . count($semesters_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>Semester Name</th><th>Code</th><th>Status</th></tr>';
+    $i = 1;
+    foreach ($semesters_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['semester_name']) . '</td><td>' . htmlspecialchars($row['semester_code']) . '</td><td>' . ($row['is_current'] ? 'Current' : '') . '</td></tr>';
     }
+    $html .= '</table>';
+    
+    $html .= '<div class="footer">This is a computer-generated report. No signature is required.</div>';
+    $html .= '</body></html>';
+    
+    echo $html;
+    exit;
 }
+
+// ============================================
+// WORD EXPORT
+// ============================================
+if (isset($_GET['export_type']) && $_GET['export_type'] == 'word') {
+    $filename = 'Admin_System_Management_Report_' . date('Ymd');
+    header('Content-Type: application/msword');
+    header('Content-Disposition: attachment; filename="' . $filename . '.doc"');
+    
+    $html = '<html><head><meta charset="UTF-8"><title>' . $filename . '</title>';
+    $html .= '<style>
+        body { font-family: "Times New Roman", Times, serif; margin: 2.54cm; font-size: 12pt; }
+        .header { text-align: center; border-bottom: 2px solid #1b4d3e; padding-bottom: 15px; margin-bottom: 20px; }
+        .university-name { font-size: 20pt; font-weight: bold; color: #1b4d3e; }
+        .report-title { font-size: 18pt; font-weight: bold; text-align: center; margin: 20px 0; }
+        .section-title { font-size: 16pt; font-weight: bold; background: #1b4d3e; color: white; padding: 8px; margin-top: 20px; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th { background: #1b4d3e; color: white; padding: 6px 8px; border: 1px solid #2d6a4f; text-align: left; }
+        td { padding: 5px 8px; border: 1px solid #ddd; }
+        .footer { text-align: center; margin-top: 30px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 10pt; color: #888; }
+    </style>';
+    $html .= '</head><body>';
+    
+    $html .= '<div class="header">';
+    $html .= '<div class="university-name">CARLOS HILADO MEMORIAL STATE UNIVERSITY</div>';
+    $html .= '<div>Talisay City, Negros Occidental, Philippines</div>';
+    $html .= '<div>E-Clearance System - Official Report</div>';
+    $html .= '</div>';
+    
+    $html .= '<div class="report-title">ADMIN SYSTEM MANAGEMENT REPORT</div>';
+    $html .= '<p><strong>Date Generated:</strong> ' . date('F d, Y') . ' | <strong>Generated by:</strong> System Administrator</p>';
+    
+    $html .= '<div class="section-title">I. SYSTEM SUMMARY</div>';
+    $html .= '<table><tr><th>Metric</th><th>Value</th></tr>';
+    $html .= '<tr><td>Total Courses</td><td>' . $totalCourses . '</td></tr>';
+    $html .= '<tr><td>Total Offices</td><td>' . $totalOffices . '</td></tr>';
+    $html .= '<tr><td>Total Sections</td><td>' . $totalSections . '</td></tr>';
+    $html .= '<tr><td>Total School Years</td><td>' . $totalSchoolYears . '</td></tr>';
+    $html .= '<tr><td>Total Semesters</td><td>' . $totalSemesters . '</td></tr>';
+    $html .= '<tr><td>Admin Accounts</td><td>' . $totalAdminAccounts . '</td></tr>';
+    $html .= '<tr><td>Office Accounts</td><td>' . $totalOfficeAccounts . '</td></tr>';
+    $html .= '<tr><td>Current School Year</td><td>' . ($currentSchoolYear ? $currentSchoolYear['school_year'] : 'N/A') . '</td></tr>';
+    $html .= '<tr><td>Current Semester</td><td>' . ($currentSemester ? $currentSemester['semester_name'] : 'N/A') . '</td></tr>';
+    $html .= '</table>';
+    
+    $html .= '<div class="section-title">II. COURSES LIST (' . count($courses_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>Course Code</th><th>Course Name</th></tr>';
+    $i = 1;
+    foreach ($courses_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['course_code']) . '</td><td>' . htmlspecialchars($row['course_name']) . '</td></tr>';
+    }
+    $html .= '</table>';
+    
+    $html .= '<div class="section-title">III. OFFICES LIST (' . count($offices_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>Office Name</th></tr>';
+    $i = 1;
+    foreach ($offices_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['office_name']) . '</td></tr>';
+    }
+    $html .= '</table>';
+    
+    $html .= '<div class="section-title">IV. SECTIONS LIST (' . count($sections_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>Course</th><th>Year Level</th><th>Section Name</th></tr>';
+    $i = 1;
+    foreach ($sections_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['course']) . '</td><td>' . $row['year'] . 'th Year</td><td>' . htmlspecialchars($row['section_name']) . '</td></tr>';
+    }
+    $html .= '</table>';
+    
+    $html .= '<div class="section-title">V. SCHOOL YEARS LIST (' . count($school_years_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>School Year</th><th>Status</th></tr>';
+    $i = 1;
+    foreach ($school_years_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['school_year']) . '</td><td>' . ($row['is_current'] ? 'Current' : '') . '</td></tr>';
+    }
+    $html .= '</table>';
+    
+    $html .= '<div class="section-title">VI. SEMESTERS LIST (' . count($semesters_data) . ')</div>';
+    $html .= '<table><tr><th>#</th><th>Semester Name</th><th>Code</th><th>Status</th></tr>';
+    $i = 1;
+    foreach ($semesters_data as $row) {
+        $html .= '<tr><td>' . $i++ . '</td><td>' . htmlspecialchars($row['semester_name']) . '</td><td>' . htmlspecialchars($row['semester_code']) . '</td><td>' . ($row['is_current'] ? 'Current' : '') . '</td></tr>';
+    }
+    $html .= '</table>';
+    
+    $html .= '<div class="footer">This is a computer-generated report. No signature is required.</div>';
+    $html .= '</body></html>';
+    
+    echo $html;
+    exit;
+}
+
+// ============================================
+// PDF EXPORT - Using Print to PDF Method
+// ============================================
+if (isset($_GET['export_type']) && $_GET['export_type'] == 'pdf') {
+    $filename = 'Admin_System_Management_Report_' . date('Ymd');
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title><?php echo $filename; ?></title>
+        <style>
+            body { font-family: "Times New Roman", Times, serif; font-size: 12pt; margin: 40px; }
+            .header { text-align: center; border-bottom: 2px solid #1b4d3e; padding-bottom: 15px; margin-bottom: 20px; }
+            .university-name { font-size: 18pt; font-weight: bold; color: #1b4d3e; }
+            .report-title { font-size: 16pt; font-weight: bold; text-align: center; margin: 20px 0; }
+            .section-title { font-size: 14pt; font-weight: bold; background: #1b4d3e; color: white; padding: 6px; margin-top: 15px; }
+            table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+            th { background: #1b4d3e; color: white; padding: 5px 8px; border: 1px solid #2d6a4f; text-align: left; }
+            td { padding: 4px 8px; border: 1px solid #ddd; }
+            .footer { text-align: center; margin-top: 30px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 9pt; color: #888; }
+            @media print {
+                body { margin: 20px; }
+                .no-print { display: none !important; }
+            }
+            .no-print { 
+                background: #1b4d3e; 
+                color: white; 
+                padding: 15px; 
+                text-align: center; 
+                margin-bottom: 20px; 
+                border-radius: 8px;
+            }
+            .no-print button { 
+                padding: 10px 25px; 
+                margin: 0 8px; 
+                border: none; 
+                cursor: pointer; 
+                font-size: 14px; 
+                border-radius: 4px; 
+                font-weight: bold;
+            }
+            .btn-print { background: #f1c40f; color: #1b4d3e; }
+            .btn-back { background: #7f8c8d; color: white; }
+            .btn-print:hover { background: #e6b800; }
+            .btn-back:hover { background: #666; }
+            .no-print p { margin-top: 10px; font-size: 12px; opacity: 0.9; }
+        </style>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    </head>
+    <body>
+        <div class="no-print">
+            <button class="btn-print" onclick="window.print()"><i class="fas fa-print"></i> Print / Save as PDF</button>
+            <button class="btn-back" onclick="window.location.href='?adminsection=reports'"><i class="fas fa-arrow-left"></i> Back to Reports</button>
+            <p><i class="fas fa-info-circle"></i> Click "Print" then select "Save as PDF" as the destination.</p>
+        </div>
+        
+        <div class="header">
+            <div class="university-name">CARLOS HILADO MEMORIAL STATE UNIVERSITY</div>
+            <div style="font-size: 11pt; color: #555;">Talisay City, Negros Occidental, Philippines</div>
+            <div style="font-size: 10pt; color: #666;">E-Clearance System - Official Report</div>
+        </div>
+        
+        <div class="report-title">ADMIN SYSTEM MANAGEMENT REPORT</div>
+        <p style="text-align:center;"><strong>Date Generated:</strong> <?php echo date('F d, Y'); ?> | <strong>Generated by:</strong> System Administrator</p>
+        
+        <div class="section-title">I. SYSTEM SUMMARY</div>
+        <table>
+            <tr><th style="width:50%;">Metric</th><th style="width:50%;">Value</th></tr>
+            <tr><td>Total Courses</td><td><?php echo $totalCourses; ?></td></tr>
+            <tr><td>Total Offices</td><td><?php echo $totalOffices; ?></td></tr>
+            <tr><td>Total Sections</td><td><?php echo $totalSections; ?></td></tr>
+            <tr><td>Total School Years</td><td><?php echo $totalSchoolYears; ?></td></tr>
+            <tr><td>Total Semesters</td><td><?php echo $totalSemesters; ?></td></tr>
+            <tr><td>Admin Accounts</td><td><?php echo $totalAdminAccounts; ?></td></tr>
+            <tr><td>Office Accounts</td><td><?php echo $totalOfficeAccounts; ?></td></tr>
+            <tr><td>Current School Year</td><td><?php echo $currentSchoolYear ? $currentSchoolYear['school_year'] : 'N/A'; ?></td></tr>
+            <tr><td>Current Semester</td><td><?php echo $currentSemester ? $currentSemester['semester_name'] : 'N/A'; ?></td></tr>
+        </table>
+        
+        <div class="section-title">II. COURSES LIST (<?php echo count($courses_data); ?>)</div>
+        <table>
+            <tr><th>#</th><th>Course Code</th><th>Course Name</th></tr>
+            <?php $i = 1; foreach ($courses_data as $row): ?>
+            <tr><td><?php echo $i++; ?></td><td><?php echo htmlspecialchars($row['course_code']); ?></td><td><?php echo htmlspecialchars($row['course_name']); ?></td></tr>
+            <?php endforeach; ?>
+        </table>
+        
+        <div class="section-title">III. OFFICES LIST (<?php echo count($offices_data); ?>)</div>
+        <table>
+            <tr><th>#</th><th>Office Name</th></tr>
+            <?php $i = 1; foreach ($offices_data as $row): ?>
+            <tr><td><?php echo $i++; ?></td><td><?php echo htmlspecialchars($row['office_name']); ?></td></tr>
+            <?php endforeach; ?>
+        </table>
+        
+        <div class="section-title">IV. SECTIONS LIST (<?php echo count($sections_data); ?>)</div>
+        <table>
+            <tr><th>#</th><th>Course</th><th>Year Level</th><th>Section Name</th></tr>
+            <?php $i = 1; foreach ($sections_data as $row): ?>
+            <tr><td><?php echo $i++; ?></td><td><?php echo htmlspecialchars($row['course']); ?></td><td><?php echo $row['year']; ?>th Year</td><td><?php echo htmlspecialchars($row['section_name']); ?></td></tr>
+            <?php endforeach; ?>
+        </table>
+        
+        <div class="section-title">V. SCHOOL YEARS LIST (<?php echo count($school_years_data); ?>)</div>
+        <table>
+            <tr><th>#</th><th>School Year</th><th>Status</th></tr>
+            <?php $i = 1; foreach ($school_years_data as $row): ?>
+            <tr><td><?php echo $i++; ?></td><td><?php echo htmlspecialchars($row['school_year']); ?></td><td><?php echo $row['is_current'] ? 'Current' : ''; ?></td></tr>
+            <?php endforeach; ?>
+        </table>
+        
+        <div class="section-title">VI. SEMESTERS LIST (<?php echo count($semesters_data); ?>)</div>
+        <table>
+            <tr><th>#</th><th>Semester Name</th><th>Code</th><th>Status</th></tr>
+            <?php $i = 1; foreach ($semesters_data as $row): ?>
+            <tr><td><?php echo $i++; ?></td><td><?php echo htmlspecialchars($row['semester_name']); ?></td><td><?php echo htmlspecialchars($row['semester_code']); ?></td><td><?php echo $row['is_current'] ? 'Current' : ''; ?></td></tr>
+            <?php endforeach; ?>
+        </table>
+        
+        <div class="footer">This is a computer-generated report. No signature is required.</div>
+        
+        <script>
+            // Auto-open print dialog after page loads
+            window.onload = function() {
+                setTimeout(function() {
+                    window.print();
+                }, 1500);
+            };
+        </script>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+// ============================================
+// MAIN PAGE - Reports Dashboard
+// ============================================
+$recentActivities = $conn->query("SELECT * FROM chmsu_activity_log WHERE user_type='admin' AND user_id='$admin' ORDER BY created_at DESC LIMIT 10");
 ?>
 
 <!DOCTYPE html>
@@ -135,7 +398,7 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CHMSU E-Clearance System - Reports</title>
+    <title>CHMSU E-Clearance System - Admin Reports</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -144,153 +407,211 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
         .header {
             background: #1b4d3e;
             color: white;
-            padding: 15px 25px;
+            padding: 12px 20px;
             display: flex;
             align-items: center;
-            gap: 20px;
+            gap: 15px;
             position: sticky;
             top: 0;
             z-index: 1000;
         }
-        .header-logo img { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
-        .header-title h1 { font-size: 20px; font-weight: normal; font-family: 'Times New Roman', Times, serif; }
-        .header-title p { font-size: 11px; opacity: 0.8; margin-top: 3px; }
+        .header-logo img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+        .header-title h1 { font-size: 18px; font-weight: normal; }
+        .header-title p { font-size: 10px; opacity: 0.8; margin-top: 3px; }
         .dark-mode-toggle {
             background: transparent;
             border: 1px solid rgba(255,255,255,0.3);
             color: white;
-            padding: 6px 12px;
+            padding: 5px 12px;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
             margin-left: auto;
+            border-radius: 20px;
         }
         .logout-btn {
             background: #e74c3c;
             color: white;
-            padding: 6px 15px;
+            padding: 5px 12px;
             border: none;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
+            border-radius: 4px;
         }
         
-        .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
+        .dashboard-wrapper { display: flex; min-height: calc(100vh - 60px); }
+        
         .admin-sidebar {
-            width: 240px;
+            width: 260px;
             background: #1b4d3e;
             color: white;
             position: fixed;
-            height: calc(100vh - 73px);
+            height: calc(100vh - 60px);
             overflow-y: auto;
         }
-        .admin-sidebar .sidebar-header { padding: 20px; border-bottom: 1px solid #2d6a4f; }
-        .admin-sidebar .sidebar-header h3 { font-size: 16px; font-weight: normal; }
-        .admin-sidebar .sidebar-header p { font-size: 11px; opacity: 0.7; margin-top: 5px; }
-        .admin-sidebar .sidebar-menu { list-style: none; padding: 0; }
+        .admin-sidebar::-webkit-scrollbar { width: 5px; }
+        .admin-sidebar::-webkit-scrollbar-track { background: #2d6a4f; }
+        .admin-sidebar::-webkit-scrollbar-thumb { background: #f1c40f; border-radius: 5px; }
+        .admin-sidebar .sidebar-header { padding: 15px; border-bottom: 1px solid #2d6a4f; }
+        .admin-sidebar .sidebar-header h3 { font-size: 14px; font-weight: normal; }
+        .admin-sidebar .sidebar-header p { font-size: 10px; opacity: 0.7; margin-top: 5px; }
+        .admin-sidebar .sidebar-menu { list-style: none; padding: 0; margin: 0; padding-bottom: 20px; }
         .admin-sidebar .sidebar-menu li { border-bottom: 1px solid #2d6a4f; }
         .admin-sidebar .sidebar-menu a {
             display: block;
-            padding: 12px 20px;
+            padding: 10px 15px;
             color: white;
             text-decoration: none;
-            font-size: 13px;
+            font-size: 12px;
+            transition: all 0.3s;
         }
         .admin-sidebar .sidebar-menu a:hover,
-        .admin-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
+        .admin-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000; }
+        .admin-sidebar .sidebar-menu .dropdown-menu {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            background: #0f3b2f;
+            display: block;
+        }
+        .admin-sidebar .sidebar-menu .dropdown-menu li { border-bottom: 1px solid #2d6a4f; }
+        .admin-sidebar .sidebar-menu .dropdown-menu a { padding: 10px 20px 10px 35px; font-size: 11px; }
         
         .main-content {
             flex: 1;
-            margin-left: 240px;
-            padding: 20px;
+            margin-left: 260px;
+            padding: 15px;
             background: #f5f5f5;
-            min-height: calc(100vh - 73px);
+            min-height: calc(100vh - 60px);
         }
         .dashboard-header-bar {
             background: white;
-            padding: 15px 20px;
+            padding: 10px 15px;
             border: 1px solid #ddd;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
+            border-radius: 4px;
         }
-        .dashboard-header-bar h2 { font-size: 18px; font-weight: normal; color: #1b4d3e; }
+        .dashboard-header-bar h2 { font-size: 16px; color: #1b4d3e; }
         
-        .reports-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-            gap: 20px;
+        .stats-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
         }
+        .stat-box {
+            background: white;
+            border: 1px solid #ddd;
+            padding: 10px 15px;
+            text-align: center;
+            flex: 1;
+            min-width: 100px;
+            border-radius: 4px;
+        }
+        .stat-number { font-size: 22px; font-weight: bold; }
+        .stat-label { font-size: 10px; color: #666; margin-top: 3px; }
+        
         .report-card {
             background: white;
             border: 1px solid #ddd;
+            border-radius: 4px;
             overflow: hidden;
+            margin-bottom: 20px;
+            max-width: 550px;
         }
         .report-card-header {
             background: #1b4d3e;
             color: white;
-            padding: 15px;
+            padding: 15px 20px;
             font-size: 16px;
-            font-weight: normal;
+            font-weight: bold;
         }
-        .report-card-body { padding: 20px; }
-        .report-description { color: #666; font-size: 12px; margin-bottom: 15px; line-height: 1.5; }
-        .report-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .report-card-body {
+            padding: 20px;
+        }
+        .report-description {
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 15px;
+            line-height: 1.5;
+        }
+        .report-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
         .btn-excel {
             background: #27ae60;
             color: white;
-            padding: 8px 15px;
+            padding: 8px 18px;
             border: none;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
+            border-radius: 4px;
+            font-size: 13px;
             text-decoration: none;
             display: inline-block;
-            font-size: 12px;
         }
         .btn-word {
             background: #1b4d3e;
             color: white;
-            padding: 8px 15px;
+            padding: 8px 18px;
             border: none;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
+            border-radius: 4px;
+            font-size: 13px;
             text-decoration: none;
             display: inline-block;
-            font-size: 12px;
         }
-        .btn-comprehensive {
-            background: #f39c12;
+        .btn-pdf {
+            background: #e74c3c;
             color: white;
-            padding: 8px 15px;
+            padding: 8px 18px;
             border: none;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
+            border-radius: 4px;
+            font-size: 13px;
             text-decoration: none;
             display: inline-block;
-            font-size: 12px;
         }
         .btn-excel:hover { background: #219a52; }
         .btn-word:hover { background: #2d6a4f; }
-        .btn-comprehensive:hover { background: #e67e22; }
+        .btn-pdf:hover { background: #c0392b; }
         
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 10px;
-            margin-bottom: 15px;
-            border-left: 3px solid #e74c3c;
+        .content-card {
+            background: white;
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+            border-radius: 4px;
         }
-        .success {
-            background: #d4edda;
-            color: #155724;
-            padding: 10px;
-            margin-bottom: 15px;
-            border-left: 3px solid #27ae60;
+        .content-card-header {
+            background: #f8f9fa;
+            padding: 10px 15px;
+            border-bottom: 1px solid #ddd;
+            font-size: 12px;
+            font-weight: normal;
         }
+        .content-card-body { padding: 10px; }
+        
+        .activity-log { max-height: 300px; overflow-y: auto; }
+        .activity-item { padding: 8px; border-bottom: 1px solid #eee; font-size: 11px; }
+        .activity-item .time { color: #666; font-size: 10px; margin-top: 3px; }
+        .activity-item .user { font-weight: bold; color: #1b4d3e; }
+        
+        body.dark-mode { background: #0a0a0a; }
+        body.dark-mode .main-content { background: #0a0a0a; }
+        body.dark-mode .dashboard-header-bar,
+        body.dark-mode .stat-box,
+        body.dark-mode .report-card,
+        body.dark-mode .content-card { background: #1a1a1a; border-color: #333; color: #fff; }
+        body.dark-mode .dashboard-header-bar h2 { color: #f1c40f; }
+        body.dark-mode .report-description { color: #ccc; }
+        body.dark-mode .activity-item { border-bottom-color: #333; }
+        body.dark-mode .activity-item .time { color: #aaa; }
         
         @media (max-width: 768px) {
             .admin-sidebar { width: 100%; position: relative; height: auto; }
             .main-content { margin-left: 0; }
-            .reports-grid { grid-template-columns: 1fr; }
+            .stats-row { flex-direction: column; }
         }
     </style>
 </head>
@@ -305,7 +626,7 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
         <p>CLEARANCE SYSTEM | Admin Portal - Reports</p>
     </div>
     <button class="dark-mode-toggle" onclick="toggleDarkMode()">Dark Mode</button>
-    <button onclick="confirmLogout()" class="logout-btn">Logout</button>
+    <button onclick="logoutUser()" class="logout-btn">Logout</button>
 </div>
 
 <div class="dashboard-wrapper">
@@ -315,140 +636,125 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
             <p>System Administrator</p>
         </div>
         <ul class="sidebar-menu">
-            <li><a href="?adminsection=dashboard">Dashboard</a></li>
-            <li><a href="?adminsection=courses">Courses</a></li>
-            <li><a href="?adminsection=offices">Offices</a></li>
-            <li><a href="?adminsection=sections">Sections</a></li>
-            <li><a href="?adminsection=school_years">School Years</a></li>
-            <li><a href="?adminsection=semesters">Semesters</a></li>
-            <li><a href="?adminsection=reports" class="active">Reports</a></li>
-            <li><a href="?adminsection=activity">Activity Log</a></li>
-            <li><a href="#" onclick="confirmLogout()">Logout</a></li>
+            <li><a href="?adminsection=dashboard" class="<?php echo $adminSection == 'dashboard' ? 'active' : ''; ?>">
+                <i class="fas fa-tachometer-alt"></i> Dashboard
+            </a></li>
+            
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">
+                    <i class="fas fa-cogs"></i> Maintenance
+                </a>
+                <ul class="dropdown-menu">
+                    <li><a href="?adminsection=courses" class="<?php echo $adminSection == 'courses' ? 'active' : ''; ?>">
+                        <i class="fas fa-book"></i> Courses
+                    </a></li>
+                    <li><a href="?adminsection=offices" class="<?php echo $adminSection == 'offices' ? 'active' : ''; ?>">
+                        <i class="fas fa-building"></i> Offices
+                    </a></li>
+                    <li><a href="?adminsection=sections" class="<?php echo $adminSection == 'sections' ? 'active' : ''; ?>">
+                        <i class="fas fa-layer-group"></i> Sections
+                    </a></li>
+                    <li><a href="?adminsection=school_years" class="<?php echo $adminSection == 'school_years' ? 'active' : ''; ?>">
+                        <i class="fas fa-calendar"></i> School Years
+                    </a></li>
+                    <li><a href="?adminsection=semesters" class="<?php echo $adminSection == 'semesters' ? 'active' : ''; ?>">
+                        <i class="fas fa-clock"></i> Semesters
+                    </a></li>
+                </ul>
+            </li>
+            
+            <li><a href="?adminsection=reports" class="active">
+                <i class="fas fa-chart-bar"></i> Reports
+            </a></li>
+            
+            <li><a href="?adminsection=activity" class="<?php echo $adminSection == 'activity' ? 'active' : ''; ?>">
+                <i class="fas fa-history"></i> Activity Log
+            </a></li>
+            
+            <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
+                <a href="#" onclick="logoutUser()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </li>
         </ul>
+        <div style="padding: 10px; font-size: 10px; color: #ddd; border-top: 1px solid #2d6a4f; margin-top: 20px;">
+            Storage: <?php echo formatFileSize($storage_used); ?> / 100MB
+            <div style="width:100%; height:3px; background:#2d6a4f; margin-top:4px; border-radius:2px;">
+                <div style="width:<?php echo $storage_percent; ?>%; height:100%; background:#f1c40f; border-radius:2px;"></div>
+            </div>
+        </div>
     </div>
     
     <div class="main-content">
         <div class="dashboard-header-bar">
-            <h2>System Reports</h2>
+            <h2>System Management Reports</h2>
             <span><?php echo date('F d, Y'); ?></span>
         </div>
         
-        <?php if (isset($error)): ?>
-            <div class="error"><?php echo $error; ?></div>
-        <?php endif; ?>
-        <?php if (isset($success)): ?>
-            <div class="success"><?php echo $success; ?></div>
-        <?php endif; ?>
+        <!-- STATISTICS SUMMARY -->
+        <div class="stats-row">
+            <div class="stat-box">
+                <div class="stat-number"><?php echo $totalCourses; ?></div>
+                <div class="stat-label">Courses</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number"><?php echo $totalOffices; ?></div>
+                <div class="stat-label">Offices</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number"><?php echo $totalSections; ?></div>
+                <div class="stat-label">Sections</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number"><?php echo $totalSchoolYears; ?></div>
+                <div class="stat-label">School Years</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number"><?php echo $totalSemesters; ?></div>
+                <div class="stat-label">Semesters</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-number"><?php echo $totalAdminAccounts + $totalOfficeAccounts; ?></div>
+                <div class="stat-label">User Accounts</div>
+            </div>
+        </div>
         
-        <!-- Comprehensive System Report -->
-        <div class="report-card" style="border: 2px solid #f39c12; margin-bottom: 20px;">
-            <div class="report-card-header" style="background: #f39c12; color: #000;">COMPREHENSIVE SYSTEM REPORT</div>
+        <!-- ONE REPORT CARD -->
+        <div class="report-card">
+            <div class="report-card-header"><i class="fas fa-file-alt"></i> Complete System Management Report</div>
             <div class="report-card-body">
                 <div class="report-description">
-                    <strong>Complete system report including:</strong><br>
-                    • Executive Summary with key metrics<br>
-                    • Student Master List<br>
-                    • Office Performance Report<br>
-                    • Student Clearance Status<br>
-                    • Recent System Activities<br>
-                    • Professional format with university letterhead and signature lines
+                    <strong>Includes:</strong><br>
+                    • System Summary (Courses, Offices, Sections, School Years, Semesters, User Accounts)<br>
+                    • Complete Courses List<br>
+                    • Complete Offices List<br>
+                    • Complete Sections List<br>
+                    • Complete School Years List<br>
+                    • Complete Semesters List
                 </div>
                 <div class="report-actions">
-                    <a href="?adminsection=reports&export=comprehensive" class="btn-comprehensive">
-                        <i class="fas fa-file-alt"></i> Generate Comprehensive Report (Word)
-                    </a>
+                    <a href="?adminsection=reports&export_type=excel" class="btn-excel"><i class="fas fa-file-excel"></i> Export Excel</a>
+                    <a href="?adminsection=reports&export_type=word" class="btn-word"><i class="fas fa-file-word"></i> Export Word</a>
+                    <a href="?adminsection=reports&export_type=pdf" class="btn-pdf"><i class="fas fa-file-pdf"></i> Export PDF</a>
                 </div>
             </div>
         </div>
         
-        <div class="reports-grid">
-            <!-- System Activity Report -->
-            <div class="report-card">
-                <div class="report-card-header">System Activity Report</div>
-                <div class="report-card-body">
-                    <div class="report-description">
-                        Complete log of all user activities including logins, submissions, approvals, and declines.
-                    </div>
-                    <div class="report-actions">
-                        <a href="?adminsection=reports&export_report=excel&type=activity" class="btn-excel">
-                            <i class="fas fa-file-excel"></i> Export Excel
-                        </a>
-                        <a href="?adminsection=reports&export_report=word&type=activity" class="btn-word">
-                            <i class="fas fa-file-word"></i> Export Word
-                        </a>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Student User Accounts Report -->
-            <div class="report-card">
-                <div class="report-card-header">Student User Accounts Report</div>
-                <div class="report-card-body">
-                    <div class="report-description">
-                        List of all registered student accounts with their complete details.
-                    </div>
-                    <div class="report-actions">
-                        <a href="?adminsection=reports&export_report=excel&type=users" class="btn-excel">
-                            <i class="fas fa-file-excel"></i> Export Excel
-                        </a>
-                        <a href="?adminsection=reports&export_report=word&type=users" class="btn-word">
-                            <i class="fas fa-file-word"></i> Export Word
-                        </a>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Clearance Status Report -->
-            <div class="report-card">
-                <div class="report-card-header">Clearance Status Report</div>
-                <div class="report-card-body">
-                    <div class="report-description">
-                        Student clearance completion status with progress tracking per office.
-                    </div>
-                    <div class="report-actions">
-                        <a href="?adminsection=reports&export_report=excel&type=clearance" class="btn-excel">
-                            <i class="fas fa-file-excel"></i> Export Excel
-                        </a>
-                        <a href="?adminsection=reports&export_report=word&type=clearance" class="btn-word">
-                            <i class="fas fa-file-word"></i> Export Word
-                        </a>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Office Performance Report -->
-            <div class="report-card">
-                <div class="report-card-header">Office Performance Report</div>
-                <div class="report-card-body">
-                    <div class="report-description">
-                        Each office's performance metrics: requirements, submissions, approvals, and approval rates.
-                    </div>
-                    <div class="report-actions">
-                        <a href="?adminsection=reports&export_report=excel&type=office_performance" class="btn-excel">
-                            <i class="fas fa-file-excel"></i> Export Excel
-                        </a>
-                        <a href="?adminsection=reports&export_report=word&type=office_performance" class="btn-word">
-                            <i class="fas fa-file-word"></i> Export Word
-                        </a>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Requirements Report -->
-            <div class="report-card">
-                <div class="report-card-header">Requirements Report</div>
-                <div class="report-card-body">
-                    <div class="report-description">
-                        List of all clearance requirements created in the system.
-                    </div>
-                    <div class="report-actions">
-                        <a href="?adminsection=reports&export_report=excel&type=requirements" class="btn-excel">
-                            <i class="fas fa-file-excel"></i> Export Excel
-                        </a>
-                        <a href="?adminsection=reports&export_report=word&type=requirements" class="btn-word">
-                            <i class="fas fa-file-word"></i> Export Word
-                        </a>
-                    </div>
+        <!-- RECENT ACTIVITY -->
+        <div class="content-card">
+            <div class="content-card-header">Recent Admin Activity</div>
+            <div class="content-card-body">
+                <div class="activity-log">
+                    <?php if ($recentActivities && $recentActivities->num_rows > 0): ?>
+                        <?php while ($log = $recentActivities->fetch_assoc()): ?>
+                            <div class="activity-item">
+                                <div><span class="user"><?php echo htmlspecialchars($log['user_id']); ?></span> - <?php echo htmlspecialchars($log['action']); ?></div>
+                                <div class="time"><?php echo date('M d, Y H:i:s', strtotime($log['created_at'])); ?></div>
+                            </div>
+                        <?php endwhile; ?>
+                    <?php else: ?>
+                        <div class="activity-item">No activity records found.</div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -460,15 +766,26 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
         document.body.classList.toggle('dark-mode');
         const isDarkMode = document.body.classList.contains('dark-mode');
         localStorage.setItem('darkMode', isDarkMode);
+        const btn = document.querySelector('.dark-mode-toggle');
+        if (btn) {
+            btn.innerHTML = isDarkMode ? '<i class="fas fa-sun"></i> Light Mode' : '<i class="fas fa-moon></i> Dark Mode';
+        }
     }
+    
     if (localStorage.getItem('darkMode') === 'true') {
         document.body.classList.add('dark-mode');
+        const btn = document.querySelector('.dark-mode-toggle');
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
+        }
     }
-    function confirmLogout() {
+    
+    function logoutUser() {
         if(confirm('Are you sure you want to logout?')) {
             window.location.href = '?logout=1';
         }
     }
 </script>
+
 </body>
 </html>

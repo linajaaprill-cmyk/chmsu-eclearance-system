@@ -1,6 +1,8 @@
 <?php
 $office = $_SESSION['office'];
 $currentOfficeSection = 'reports';
+$storage_used = getTotalUploadSize();
+$storage_percent = min(($storage_used / (100 * 1024 * 1024)) * 100, 100);
 
 // Handle report exports
 if (isset($_GET['export_report']) && isset($_GET['type'])) {
@@ -139,16 +141,20 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
         
         .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
         .office-sidebar {
-            width: 240px;
+            width: 260px;
             background: #1b4d3e;
             color: white;
             position: fixed;
             height: calc(100vh - 73px);
             overflow-y: auto;
         }
+        .office-sidebar::-webkit-scrollbar { width: 5px; }
+        .office-sidebar::-webkit-scrollbar-track { background: #2d6a4f; }
+        .office-sidebar::-webkit-scrollbar-thumb { background: #f1c40f; border-radius: 5px; }
         .office-sidebar .sidebar-header { padding: 20px; border-bottom: 1px solid #2d6a4f; }
         .office-sidebar .sidebar-header h3 { font-size: 16px; font-weight: normal; }
-        .office-sidebar .sidebar-menu { list-style: none; padding: 0; }
+        .office-sidebar .sidebar-header p { font-size: 11px; opacity: 0.7; margin-top: 5px; }
+        .office-sidebar .sidebar-menu { list-style: none; padding: 0; margin: 0; }
         .office-sidebar .sidebar-menu li { border-bottom: 1px solid #2d6a4f; }
         .office-sidebar .sidebar-menu a {
             display: block;
@@ -156,13 +162,14 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
             color: white;
             text-decoration: none;
             font-size: 13px;
+            transition: all 0.3s;
         }
         .office-sidebar .sidebar-menu a:hover,
         .office-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
         
         .main-content {
             flex: 1;
-            margin-left: 240px;
+            margin-left: 260px;
             padding: 20px;
             background: #f5f5f5;
             min-height: calc(100vh - 73px);
@@ -218,9 +225,17 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
         .btn-excel:hover { background: #219a52; }
         .btn-word:hover { background: #2d6a4f; }
         
+        body.dark-mode { background: #0a0a0a; }
+        body.dark-mode .main-content { background: #0a0a0a; }
+        body.dark-mode .dashboard-header-bar,
+        body.dark-mode .report-card { background: #1a1a1a; border-color: #333; color: #fff; }
+        body.dark-mode .dashboard-header-bar h2 { color: #f1c40f; }
+        body.dark-mode .report-description { color: #ccc; }
+        
         @media (max-width: 768px) {
             .office-sidebar { width: 100%; position: relative; height: auto; }
             .main-content { margin-left: 0; }
+            .reports-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -239,21 +254,33 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
 </div>
 
 <div class="dashboard-wrapper">
+    <!-- ============================================ -->
+    <!-- OFFICE SIDEBAR - MATCHES DASHBOARD SIDEBAR   -->
+    <!-- ============================================ -->
     <div class="office-sidebar">
         <div class="sidebar-header">
             <h3><?php echo htmlspecialchars($office); ?> Portal</h3>
+            <p>Clearance Management</p>
         </div>
         <ul class="sidebar-menu">
-            <li><a href="?officesection=dashboard">Dashboard</a></li>
-            <li><a href="?officesection=requirements">Requirements</a></li>
-            <li><a href="?officesection=submissions">Submissions</a></li>
-            <li><a href="?officesection=reports" class="active">Reports</a></li>
-            <li><a href="#" onclick="confirmLogout()">Logout</a></li>
+            <li><a href="?officesection=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+            <li><a href="?officesection=note"><i class="fas fa-rss"></i> Feed Updates</a></li>
+            <li><a href="?officesection=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
+            <li><a href="?officesection=reports" class="active"><i class="fas fa-chart-bar"></i> Reports</a></li>
+            <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
+                <a href="#" onclick="confirmLogout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </li>
         </ul>
-        <div class="storage-info" style="padding: 12px; font-size: 10px; color: #dddddd; border-top: 1px solid #2d6a4f;">
-            Storage: <?php echo formatFileSize(getTotalUploadSize()); ?> / 100MB
+        <div style="padding: 12px 20px; font-size: 10px; color: #dddddd; border-top: 1px solid #2d6a4f; margin-top: 20px;">
+            Storage: <?php echo formatFileSize($storage_used); ?> / 100MB
+            <div style="width:100%; height:3px; background:#2d6a4f; margin-top:4px; border-radius: 2px;">
+                <div style="width:<?php echo $storage_percent; ?>%; height:100%; background:#f1c40f; border-radius: 2px;"></div>
+            </div>
         </div>
     </div>
+    <!-- ============================================ -->
+    <!-- END OF SIDEBAR                               -->
+    <!-- ============================================ -->
     
     <div class="main-content">
         <div class="dashboard-header-bar">
@@ -326,10 +353,20 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
         document.body.classList.toggle('dark-mode');
         const isDarkMode = document.body.classList.contains('dark-mode');
         localStorage.setItem('darkMode', isDarkMode);
+        const btn = document.querySelector('.dark-mode-toggle');
+        if (btn) {
+            btn.innerHTML = isDarkMode ? '<i class="fas fa-sun"></i> Light Mode' : '<i class="fas fa-moon"></i> Dark Mode';
+        }
     }
+    
     if (localStorage.getItem('darkMode') === 'true') {
         document.body.classList.add('dark-mode');
+        const btn = document.querySelector('.dark-mode-toggle');
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
+        }
     }
+    
     function confirmLogout() {
         if(confirm('Are you sure you want to logout?')) {
             window.location.href = '?logout=1';

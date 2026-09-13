@@ -8,13 +8,21 @@ $selectedRequirement = null;
 $submission = null;
 $comments = null;
 
+// Get student's current year from database
+$current_year_result = $conn->query("SELECT chmsu_year FROM chmsu_students_master WHERE chmsu_student_id='{$_SESSION['student']}'");
+$current_student_year = '1';
+if ($current_year_result && $current_year_result->num_rows > 0) {
+    $current_student_year = $current_year_result->fetch_assoc()['chmsu_year'];
+}
+
 if ($selectedReq > 0 && $selectedOffice) {
+    // FIXED: Include requirements with NULL year/section (All Years/All Sections)
     $selectedRequirement = $conn->query("SELECT * FROM chmsu_requirements 
                                         WHERE chmsu_id=$selectedReq 
                                         AND chmsu_office='$selectedOffice'
                                         AND chmsu_course='{$student['chmsu_course']}' 
-                                        AND chmsu_year='{$student['chmsu_year']}'
-                                        AND chmsu_section='{$student['chmsu_section']}'")->fetch_assoc();
+                                        AND (chmsu_year='$current_student_year' OR chmsu_year IS NULL OR chmsu_year = '')
+                                        AND (chmsu_section='{$student['chmsu_section']}' OR chmsu_section IS NULL OR chmsu_section = '')")->fetch_assoc();
     
     if ($selectedRequirement) {
         $deadline_passed = $selectedRequirement['chmsu_deadline'] && strtotime($selectedRequirement['chmsu_deadline']) < time();
@@ -33,11 +41,12 @@ if ($selectedReq > 0 && $selectedOffice) {
     }
 }
 
+// FIXED: List requirements including NULL year/section
 $reqs = $conn->query("SELECT * FROM chmsu_requirements 
                      WHERE chmsu_office='$selectedOffice' 
                      AND chmsu_course='{$student['chmsu_course']}' 
-                     AND chmsu_year='{$student['chmsu_year']}'
-                     AND chmsu_section='{$student['chmsu_section']}'
+                     AND (chmsu_year='$current_student_year' OR chmsu_year IS NULL OR chmsu_year = '')
+                     AND (chmsu_section='{$student['chmsu_section']}' OR chmsu_section IS NULL OR chmsu_section = '')
                      ORDER BY chmsu_deadline ASC");
 ?>
 
@@ -77,7 +86,8 @@ $reqs = $conn->query("SELECT * FROM chmsu_requirements
                     if ($status == 'Approved') $statusClass = 'status-dot-approved';
                     elseif ($status == 'Declined') { $statusClass = 'status-dot-declined'; $nameClass = 'rejected-name'; }
                 }
-                $countQuery = $conn->query("SELECT COUNT(*) as c FROM chmsu_requirements WHERE chmsu_office='$office' AND chmsu_course='{$student['chmsu_course']}' AND chmsu_year='{$student['chmsu_year']}' AND chmsu_section='{$student['chmsu_section']}'");
+                // FIXED: Count requirements including NULL year/section
+                $countQuery = $conn->query("SELECT COUNT(*) as c FROM chmsu_requirements WHERE chmsu_office='$office' AND chmsu_course='{$student['chmsu_course']}' AND (chmsu_year='$current_student_year' OR chmsu_year IS NULL OR chmsu_year = '') AND (chmsu_section='{$student['chmsu_section']}' OR chmsu_section IS NULL OR chmsu_section = '')");
                 $count = $countQuery->fetch_assoc()['c'];
             ?>
             <li>

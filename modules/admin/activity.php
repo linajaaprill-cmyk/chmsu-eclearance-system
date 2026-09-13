@@ -1,6 +1,20 @@
 <?php
+require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../includes/functions.php';
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (!isset($_SESSION['admin'])) {
+    header("Location: ../index.php");
+    exit;
+}
+
 $admin = $_SESSION['admin'];
 $adminSection = 'activity';
+$error = '';
+$success = '';
 ?>
 
 <!DOCTYPE html>
@@ -11,17 +25,8 @@ $adminSection = 'activity';
     <title>CHMSU E-Clearance System - Activity Log</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Times New Roman', Times, serif;
-            background: #f5f5f5;
-            font-size: 14px;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Times New Roman', Times, serif; background: #f5f5f5; font-size: 14px; }
         
         .header {
             background: #1b4d3e;
@@ -34,108 +39,74 @@ $adminSection = 'activity';
             top: 0;
             z-index: 1000;
         }
-        
-        .header-logo img {
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            object-fit: cover;
-        }
-        
-        .header-title h1 {
-            font-size: 20px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-        }
-        
-        .header-title p {
-            font-size: 11px;
-            opacity: 0.8;
-            margin-top: 3px;
-        }
-        
+        .header-logo img { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
+        .header-title h1 { font-size: 20px; font-weight: normal; }
+        .header-title p { font-size: 11px; opacity: 0.8; margin-top: 3px; }
         .dark-mode-toggle {
             background: transparent;
             border: 1px solid rgba(255,255,255,0.3);
             color: white;
             padding: 6px 12px;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
             margin-left: auto;
         }
-        
         .logout-btn {
             background: #e74c3c;
             color: white;
             padding: 6px 15px;
             border: none;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
         }
         
-        .dashboard-wrapper {
-            display: flex;
-            min-height: calc(100vh - 73px);
-        }
+        .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
         
         .admin-sidebar {
-            width: 240px;
+            width: 260px;
             background: #1b4d3e;
             color: white;
             position: fixed;
             height: calc(100vh - 73px);
             overflow-y: auto;
         }
-        
-        .admin-sidebar .sidebar-header {
-            padding: 20px;
-            border-bottom: 1px solid #2d6a4f;
-        }
-        
-        .admin-sidebar .sidebar-header h3 {
-            font-size: 16px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-        }
-        
-        .admin-sidebar .sidebar-header p {
-            font-size: 11px;
-            opacity: 0.7;
-            margin-top: 5px;
-        }
-        
-        .admin-sidebar .sidebar-menu {
-            list-style: none;
-            padding: 0;
-        }
-        
-        .admin-sidebar .sidebar-menu li {
-            border-bottom: 1px solid #2d6a4f;
-        }
-        
+        .admin-sidebar::-webkit-scrollbar { width: 5px; }
+        .admin-sidebar::-webkit-scrollbar-track { background: #2d6a4f; }
+        .admin-sidebar::-webkit-scrollbar-thumb { background: #f1c40f; border-radius: 5px; }
+        .admin-sidebar .sidebar-header { padding: 20px; border-bottom: 1px solid #2d6a4f; }
+        .admin-sidebar .sidebar-header h3 { font-size: 16px; font-weight: normal; }
+        .admin-sidebar .sidebar-header p { font-size: 11px; opacity: 0.7; margin-top: 5px; }
+        .admin-sidebar .sidebar-menu { list-style: none; padding: 0; margin: 0; padding-bottom: 20px; }
+        .admin-sidebar .sidebar-menu li { border-bottom: 1px solid #2d6a4f; }
+        .admin-sidebar .sidebar-menu li.dropdown { border-bottom: none; }
         .admin-sidebar .sidebar-menu a {
             display: block;
             padding: 12px 20px;
             color: white;
             text-decoration: none;
             font-size: 13px;
-            font-family: 'Times New Roman', Times, serif;
+            transition: all 0.3s;
         }
-        
         .admin-sidebar .sidebar-menu a:hover,
-        .admin-sidebar .sidebar-menu a.active {
-            background: #f1c40f;
-            color: #000000;
+        .admin-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
+        .admin-sidebar .sidebar-menu .dropdown-menu {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            background: #0f3b2f;
+            display: block;
         }
+        .admin-sidebar .sidebar-menu .dropdown-menu li { border-bottom: 1px solid #2d6a4f; }
+        .admin-sidebar .sidebar-menu .dropdown-menu a { padding: 10px 20px 10px 35px; font-size: 12px; }
+        .admin-sidebar .sidebar-menu .dropdown-menu a:hover,
+        .admin-sidebar .sidebar-menu .dropdown-menu a.active { background: #f1c40f; color: #000000; }
+        .dropdown-toggle::after { display: none; }
         
         .main-content {
             flex: 1;
-            margin-left: 240px;
+            margin-left: 260px;
             padding: 20px;
             background: #f5f5f5;
             min-height: calc(100vh - 73px);
         }
-        
         .dashboard-header-bar {
             background: white;
             padding: 15px 20px;
@@ -145,20 +116,13 @@ $adminSection = 'activity';
             align-items: center;
             margin-bottom: 20px;
         }
-        
-        .dashboard-header-bar h2 {
-            font-size: 18px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-            color: #1b4d3e;
-        }
+        .dashboard-header-bar h2 { font-size: 18px; font-weight: normal; color: #1b4d3e; }
         
         .content-card {
             background: white;
             border: 1px solid #ddd;
             margin-bottom: 20px;
         }
-        
         .content-card-header {
             background: #f8f9fa;
             padding: 12px 15px;
@@ -166,17 +130,13 @@ $adminSection = 'activity';
             font-size: 13px;
             font-weight: normal;
         }
-        
-        .content-card-body {
-            padding: 15px;
-        }
+        .content-card-body { padding: 15px; }
         
         .search-box {
             width: 100%;
             padding: 8px 12px;
             border: 1px solid #ddd;
             margin-bottom: 15px;
-            font-family: 'Times New Roman', Times, serif;
         }
         
         .export-buttons {
@@ -184,23 +144,19 @@ $adminSection = 'activity';
             gap: 10px;
             margin-bottom: 15px;
         }
-        
         .btn-excel {
             background: #27ae60;
             color: white;
             padding: 6px 12px;
             border: none;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
         }
-        
         .btn-word {
             background: #1b4d3e;
             color: white;
             padding: 6px 12px;
             border: none;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
         }
         
         .plain-table {
@@ -208,28 +164,28 @@ $adminSection = 'activity';
             border-collapse: collapse;
             font-size: 12px;
         }
-        
-        .plain-table th,
-        .plain-table td {
+        .plain-table th, .plain-table td {
             border: 1px solid #ddd;
             padding: 8px;
             text-align: left;
         }
-        
         .plain-table th {
             background: #f8f9fa;
             font-weight: normal;
         }
         
+        body.dark-mode { background: #0a0a0a; }
+        body.dark-mode .main-content { background: #0a0a0a; }
+        body.dark-mode .dashboard-header-bar,
+        body.dark-mode .content-card { background: #1a1a1a; border-color: #333; color: #fff; }
+        body.dark-mode .dashboard-header-bar h2 { color: #f1c40f; }
+        body.dark-mode .plain-table th { background: #2c2c2c; color: #fff; border-color: #444; }
+        body.dark-mode .plain-table td { border-color: #333; color: #fff; }
+        body.dark-mode .search-box { background: #2c2c2c; border-color: #444; color: #fff; }
+        
         @media (max-width: 768px) {
-            .admin-sidebar {
-                width: 100%;
-                position: relative;
-                height: auto;
-            }
-            .main-content {
-                margin-left: 0;
-            }
+            .admin-sidebar { width: 100%; position: relative; height: auto; }
+            .main-content { margin-left: 0; }
         }
     </style>
 </head>
@@ -248,20 +204,53 @@ $adminSection = 'activity';
 </div>
 
 <div class="dashboard-wrapper">
+    <!-- SIDEBAR - SAME FOR ALL ADMIN PAGES -->
     <div class="admin-sidebar">
         <div class="sidebar-header">
             <h3>Admin: <?php echo htmlspecialchars($admin); ?></h3>
             <p>System Administrator</p>
         </div>
         <ul class="sidebar-menu">
-            <li><a href="?adminsection=dashboard">Dashboard</a></li>
-            <li><a href="?adminsection=courses">Courses</a></li>
-            <li><a href="?adminsection=offices">Offices</a></li>
-            <li><a href="?adminsection=sections">Sections</a></li>
-            <li><a href="?adminsection=school_years">School Years</a></li>
-            <li><a href="?adminsection=semesters">Semesters</a></li>
-            <li><a href="?adminsection=activity" class="active">Activity Log</a></li>
-            <li><a href="#" onclick="confirmLogout()">Logout</a></li>
+            <li><a href="?adminsection=dashboard" class="<?php echo $adminSection == 'dashboard' ? 'active' : ''; ?>">
+                <i class="fas fa-tachometer-alt"></i> Dashboard
+            </a></li>
+            
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">
+                    <i class="fas fa-cogs"></i> Maintenance
+                </a>
+                <ul class="dropdown-menu">
+                    <li><a href="?adminsection=courses" class="<?php echo $adminSection == 'courses' ? 'active' : ''; ?>">
+                        <i class="fas fa-book"></i> Courses
+                    </a></li>
+                    <li><a href="?adminsection=offices" class="<?php echo $adminSection == 'offices' ? 'active' : ''; ?>">
+                        <i class="fas fa-building"></i> Offices
+                    </a></li>
+                    <li><a href="?adminsection=sections" class="<?php echo $adminSection == 'sections' ? 'active' : ''; ?>">
+                        <i class="fas fa-layer-group"></i> Sections
+                    </a></li>
+                    <li><a href="?adminsection=school_years" class="<?php echo $adminSection == 'school_years' ? 'active' : ''; ?>">
+                        <i class="fas fa-calendar"></i> School Years
+                    </a></li>
+                    <li><a href="?adminsection=semesters" class="<?php echo $adminSection == 'semesters' ? 'active' : ''; ?>">
+                        <i class="fas fa-clock"></i> Semesters
+                    </a></li>
+                </ul>
+            </li>
+            
+            <li><a href="?adminsection=reports" class="<?php echo $adminSection == 'reports' ? 'active' : ''; ?>">
+                <i class="fas fa-chart-bar"></i> Reports
+            </a></li>
+            
+            <li><a href="?adminsection=activity" class="active">
+                <i class="fas fa-history"></i> Activity Log
+            </a></li>
+            
+            <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
+                <a href="#" onclick="confirmLogout()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </li>
         </ul>
     </div>
     
@@ -295,7 +284,7 @@ $adminSection = 'activity';
                         <tbody>
                             <?php
                             $logs = $conn->query("SELECT * FROM chmsu_activity_log ORDER BY created_at DESC");
-                            if ($logs->num_rows > 0):
+                            if ($logs && $logs->num_rows > 0):
                                 while ($log = $logs->fetch_assoc()):
                             ?>
                             <tr data-search="<?php echo strtolower($log['user_id'].' '.$log['action']); ?>">
@@ -326,10 +315,18 @@ $adminSection = 'activity';
         document.body.classList.toggle('dark-mode');
         const isDarkMode = document.body.classList.contains('dark-mode');
         localStorage.setItem('darkMode', isDarkMode);
+        const btn = document.querySelector('.dark-mode-toggle');
+        if (btn) {
+            btn.innerHTML = isDarkMode ? '<i class="fas fa-sun"></i> Light Mode' : '<i class="fas fa-moon"></i> Dark Mode';
+        }
     }
     
     if (localStorage.getItem('darkMode') === 'true') {
         document.body.classList.add('dark-mode');
+        const btn = document.querySelector('.dark-mode-toggle');
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
+        }
     }
     
     function confirmLogout() {

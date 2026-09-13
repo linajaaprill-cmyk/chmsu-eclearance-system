@@ -1,0 +1,186 @@
+# ============================================================
+# CHMSU E-Clearance - .gitignore
+# Project: capstone (PHP + TiDB + Render deployment)
+# ============================================================
+
+# ============================================================
+# 🔐 Environment & Secrets (NEVER commit these!)
+# ============================================================
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.staging
+*.env
+!.env.example
+
+# ============================================================
+# 🔐 Configuration files with hardcoded secrets
+# ============================================================
+config/secrets.php
+config/credentials.php
+config/credentials.json
+secrets.json
+*.pem
+*.key
+*.crt
+*.pfx
+
+# ============================================================
+# 🔐 Database connection files
+# ============================================================
+*_connection.php
+*_credentials.php
+db_config.php
+tidb_config.php
+database.php.bak
+
+# ============================================================
+# 📁 Uploaded files (user-generated content)
+# ============================================================
+uploads/*
+!uploads/.gitkeep
+
+# ============================================================
+# 📝 Logs
+# ============================================================
+*.log
+logs/*
+!logs/.gitkeep
+error_log
+php_errors.log
+
+# ============================================================
+# 💾 Database dumps & backups
+# ============================================================
+*.sql
+*.sql.gz
+*.dump
+*.bak
+backups/
+!schema.sql
+!migrations/*.sql
+
+# ============================================================
+# 📦 Composer
+# ============================================================
+vendor/
+composer.phar
+composer.lock.bak
+.phpunit.result.cache
+.php-cs-fixer.cache
+.php-cs-fixer.php
+
+# ============================================================
+# 🧪 Test & debug files
+# ============================================================
+test_*.php
+debug_*.php
+*_test.php
+*_debug.php
+phpinfo.php
+info.php
+
+# ============================================================
+# 📚 Large third-party libraries (use composer instead)
+# ============================================================
+TCPDF-main/
+TCPDF/
+FPDF/
+PHPMailer/
+phpqrcode/
+DOMpdf/
+mpdf/
+
+# ============================================================
+# 🖥️ IDE & Editor files
+# ============================================================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.code-workspace
+
+# ============================================================
+# 🖥️ OS-specific files
+# ============================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ============================================================
+# 🚀 Render-specific
+# ============================================================
+.render/
+render.yaml.bak
+.render-secrets
+
+# ============================================================
+# 🗂️ Temporary files
+# ============================================================
+*.tmp
+*.temp
+*.cache
+tmp/
+temp/
+cache/
+.cache/
+*.pid
+*.seed
+
+# ============================================================
+# 🏗️ Build artifacts
+# ============================================================
+dist/
+build/
+*.min.js.map
+*.min.css.map
+public/build/
+
+# ============================================================
+# 🍪 Sessions & cookies
+# ============================================================
+sessions/
+session/
+*.session
+cookies.txt
+sess_*
+
+# ============================================================
+# 📊 Node.js (if you use any tooling)
+# ============================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ============================================================
+# 📱 XAMPP / local dev artifacts
+# ============================================================
+*.xampp
+xampp_*
+.htaccess.bak
+
+# ============================================================
+# ✅ Keep these files even if they match patterns above
+# ============================================================
+!.gitignore
+!.env.example
+!README.md
+!Dockerfile
+!composer.json
+!composer.lock
