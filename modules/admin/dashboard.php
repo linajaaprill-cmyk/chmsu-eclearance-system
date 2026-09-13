@@ -66,7 +66,7 @@ $r = $conn->query("SELECT chmsu_office AS office, COUNT(*) AS count FROM chmsu_r
 if ($r) while ($row = $r->fetch_assoc()) $officeRequirements[] = $row;
 
 $submissionsByMonth = [];
-$r = $conn->query("SELECT DATE_FORMAT(submitted_at, '%b %Y') AS month, COUNT(*) AS count FROM chmsu_submissions GROUP BY YEAR(submitted_at), MONTH(submitted_at) ORDER BY YEAR(submitted_at) ASC, MONTH(submitted_at) ASC LIMIT 6");
+$r = $conn->query("SELECT DATE_FORMAT(submitted_at, '%b %Y') AS month, COUNT(*) AS count FROM chmsu_submissions GROUP BY DATE_FORMAT(submitted_at, '%b %Y') ORDER BY MIN(submitted_at) ASC LIMIT 6");
 if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
 ?>
 <!DOCTYPE html>
