@@ -1,14 +1,31 @@
 <?php
+require_once __DIR__ . '/../../config/database.php';
+require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../../includes/clearance_history.php';
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (!isset($_SESSION['office'])) {
+    header("Location: ../index.php");
+    exit;
+}
+
 $office = $_SESSION['office'];
 $storage_used = getTotalUploadSize();
 $storage_percent = min(($storage_used / (100 * 1024 * 1024)) * 100, 100);
 $currentOfficeSection = 'dashboard';
 
 // ============================================
-// OFFICE STATISTICS & ANALYTICS
+// GET CURRENT SEMESTER
 // ============================================
+$currentSem = getCurrentSemester($conn);
+$currentSemId = $currentSem ? intval($currentSem['id']) : 0;
 
-// Ensure table exists
+// ============================================
+// ENSURE TABLE EXISTS (Safe Migration)
+// ============================================
 $conn->query("CREATE TABLE IF NOT EXISTS chmsu_clearance_status (
     id INT PRIMARY KEY AUTO_INCREMENT,
     student_id VARCHAR(50) NOT NULL,
@@ -17,35 +34,39 @@ $conn->query("CREATE TABLE IF NOT EXISTS chmsu_clearance_status (
     note TEXT,
     updated_by VARCHAR(100),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY unique_status (student_id, office_name)
+    semester_id INT(11) DEFAULT NULL,
+    UNIQUE KEY unique_status (student_id, office_name, semester_id)
 )");
 
-// Count students with status 'clear' for this office
-$clearCount = $conn->query("SELECT COUNT(*) as c FROM chmsu_clearance_status WHERE office_name='$office' AND status='clear'")->fetch_assoc()['c'];
+// ============================================
+// STATS & ANALYTICS (FILTERED BY CURRENT SEMESTER)
+// ============================================
+$clearCount = 0;
+$unclearCount = 0;
+$pendingCount = 0;
+$totalActiveStudents = 0;
+$clearancePercentage = 0;
 
-// Count students with status 'unclear' for this office
-$unclearCount = $conn->query("SELECT COUNT(*) as c FROM chmsu_clearance_status WHERE office_name='$office' AND status='unclear'")->fetch_assoc()['c'];
-
-// Total active students (not archived)
-$totalActiveStudents = $conn->query("SELECT COUNT(*) as c FROM chmsu_students_master WHERE is_archived = 0")->fetch_assoc()['c'];
-
-// Pending = total active - (clear + unclear)
-$pendingCount = $totalActiveStudents - ($clearCount + $unclearCount);
-if ($pendingCount < 0) $pendingCount = 0;
-
-// Clearance percentage
-$clearancePercentage = ($totalActiveStudents > 0) ? round(($clearCount / $totalActiveStudents) * 100, 1) : 0;
+if ($currentSemId > 0) {
+    $totalActiveStudents = $conn->query("SELECT COUNT(*) as c FROM chmsu_students_master WHERE is_archived = 0")->fetch_assoc()['c'];
+    
+    $clearCount = $conn->query("SELECT COUNT(*) as c FROM chmsu_clearance_status WHERE office_name='$office' AND status='clear' AND semester_id=$currentSemId")->fetch_assoc()['c'];
+    $unclearCount = $conn->query("SELECT COUNT(*) as c FROM chmsu_clearance_status WHERE office_name='$office' AND status='unclear' AND semester_id=$currentSemId")->fetch_assoc()['c'];
+    
+    $pendingCount = $totalActiveStudents - ($clearCount + $unclearCount);
+    if ($pendingCount < 0) $pendingCount = 0;
+    
+    $clearancePercentage = ($totalActiveStudents > 0) ? round(($clearCount / $totalActiveStudents) * 100, 1) : 0;
+}
 
 // Get recent activities
-$recentActivities = $conn->query("SELECT * FROM chmsu_activity_log WHERE user_type='office' AND user_id='$office' ORDER BY created_at DESC LIMIT 10");
+$recentActivities = $conn->query("SELECT * FROM chmsu_activity_log WHERE user_type='office' AND user_id='$office' ORDER BY created_at DESC LIMIT 8");
 
 // ============================================
-// GET OFFICE EMAIL INFO - SAME AS ADMIN
+// GET OFFICE EMAIL INFO
 // ============================================
 $office_info = null;
 $has_email = false;
-
-// Check if email column exists in chmsu_auth_roles
 $check_column = $conn->query("SHOW COLUMNS FROM chmsu_auth_roles LIKE 'email'");
 if ($check_column && $check_column->num_rows > 0) {
     $office_result = $conn->query("SELECT chmsu_role as office_name, email, app_password FROM chmsu_auth_roles WHERE chmsu_role='$office'");
@@ -55,31 +76,40 @@ if ($check_column && $check_column->num_rows > 0) {
     }
 }
 
-// Get chat unread count for sidebar badge
 $chat_unread_count = $conn->query("SELECT SUM(office_unread) as total FROM chmsu_chat_conversations WHERE office_name='$office'")->fetch_assoc()['total'] ?: 0;
 
 // ============================================
-// CHECK GMAIL CONNECTED - SAME AS ADMIN
+// BAR CHART DATA: Clearance by Year Level
 // ============================================
-if (isset($_GET['gmail_connected']) && $_GET['gmail_connected'] == 1 && $has_email && $office_info) {
-    $to = $office_info['email'];
-    $subject = "Gmail Connected to CHMSU E Clearance System";
-    $message = "Your Gmail account has been successfully connected to the CHMSU E Clearance System.\n\n";
-    $message .= "You will now receive OTP codes and notifications for secure office actions.\n\n";
-    $message .= "Thank you,\nCHMSU E Clearance System";
-    $headers = "From: CHMSU E Clearance <noreply@chmsu.edu.ph>\r\n";
-    $headers .= "Reply-To: noreply@chmsu.edu.ph\r\n";
-    $headers .= "X-Mailer: PHP/" . phpversion();
-    @mail($to, $subject, $message, $headers);
+$yearLabels = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+$yearClearData = [0, 0, 0, 0];
+$yearPendingData = [0, 0, 0, 0];
+
+if ($currentSemId > 0) {
+    $yearQuery = $conn->query("
+        SELECT s.chmsu_year, 
+               SUM(CASE WHEN cs.status = 'clear' THEN 1 ELSE 0 END) as cleared,
+               SUM(CASE WHEN cs.status = 'clear' OR cs.status = 'unclear' THEN 0 ELSE 1 END) as pending
+        FROM chmsu_students_master s
+        LEFT JOIN chmsu_clearance_status cs 
+            ON s.chmsu_student_id = cs.student_id 
+            AND cs.office_name = '$office' 
+            AND cs.semester_id = $currentSemId
+        WHERE s.is_archived = 0
+        GROUP BY s.chmsu_year
+    ");
+    
+    if ($yearQuery) {
+        while ($row = $yearQuery->fetch_assoc()) {
+            $y = intval($row['chmsu_year']);
+            if ($y >= 1 && $y <= 4) {
+                $yearClearData[$y - 1] = intval($row['cleared']);
+                $yearPendingData[$y - 1] = intval($row['pending']);
+            }
+        }
+    }
 }
 
-// Office-specific stats for charts
-$totalStudents = $conn->query("SELECT COUNT(*) as c FROM chmsu_user_accounts")->fetch_assoc()['c'];
-$totalRequirements = $conn->query("SELECT COUNT(*) as c FROM chmsu_requirements WHERE chmsu_office='$office'")->fetch_assoc()['c'];
-$totalSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions s JOIN chmsu_requirements r ON s.chmsu_requirement_id=r.chmsu_id WHERE r.chmsu_office='$office'")->fetch_assoc()['c'];
-$pendingSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions s JOIN chmsu_requirements r ON s.chmsu_requirement_id=r.chmsu_id WHERE r.chmsu_office='$office' AND s.chmsu_status='Submitted'")->fetch_assoc()['c'];
-$approvedSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions s JOIN chmsu_requirements r ON s.chmsu_requirement_id=r.chmsu_id WHERE r.chmsu_office='$office' AND s.chmsu_status='Approved'")->fetch_assoc()['c'];
-$declinedSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions s JOIN chmsu_requirements r ON s.chmsu_requirement_id=r.chmsu_id WHERE r.chmsu_office='$office' AND s.chmsu_status='Declined'")->fetch_assoc()['c'];
 ?>
 
 <!DOCTYPE html>
@@ -88,20 +118,48 @@ $declinedSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CHMSU E-Clearance System - <?php echo strtoupper($office); ?> Dashboard</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
 
-        body {
-            font-family: 'Times New Roman', Times, serif;
-            background: #f5f5f5;
-            font-size: 14px;
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Preline UI -->
+    <script src="https://cdn.jsdelivr.net/npm/preline@latest/dist/preline.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+    <!-- Flatpickr -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        chmsu: '#1b4d3e',
+                        chmsuLight: '#2d6a4f',
+                        chmsuYellow: '#f1c40f'
+                    }
+                }
+            }
         }
+    </script>
+
+    <style>
+        /* 
+          FIX: Exact same CSS for Sidebar to prevent blinking 
+          between pages.
+        */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Times New Roman', Times, serif; background: #f5f5f5; font-size: 14px; transition: background 0.3s; }
 
         .header {
             background: #1b4d3e;
@@ -113,53 +171,15 @@ $declinedSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions
             position: sticky;
             top: 0;
             z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
+        .header-logo img { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
+        .header-title h1 { font-size: 20px; font-weight: normal; }
+        .header-title p { font-size: 11px; opacity: 0.8; margin-top: 3px; }
+        
+        .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
 
-        .header-logo img {
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            object-fit: cover;
-        }
-
-        .header-title h1 {
-            font-size: 20px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-        }
-
-        .header-title p {
-            font-size: 11px;
-            opacity: 0.8;
-            margin-top: 3px;
-        }
-
-        .dark-mode-toggle {
-            background: transparent;
-            border: 1px solid rgba(255,255,255,0.3);
-            color: white;
-            padding: 6px 12px;
-            cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
-            margin-left: auto;
-            border-radius: 0;
-        }
-
-        .logout-btn {
-            background: #e74c3c;
-            color: white;
-            padding: 6px 15px;
-            border: none;
-            cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
-            border-radius: 0;
-        }
-
-        .dashboard-wrapper {
-            display: flex;
-            min-height: calc(100vh - 73px);
-        }
-
+        /* EXACT SAME SIDEBAR STYLES */
         .office-sidebar {
             width: 260px;
             background: #1b4d3e;
@@ -168,92 +188,41 @@ $declinedSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions
             height: calc(100vh - 73px);
             overflow-y: auto;
             overflow-x: hidden;
+            z-index: 1001;
         }
+        .office-sidebar::-webkit-scrollbar { width: 5px; }
+        .office-sidebar::-webkit-scrollbar-track { background: #2d6a4f; }
+        .office-sidebar::-webkit-scrollbar-thumb { background: #f1c40f; border-radius: 5px; }
 
-        .office-sidebar::-webkit-scrollbar {
-            width: 5px;
-        }
+        .office-sidebar .sidebar-header { padding: 20px; border-bottom: 1px solid #2d6a4f; }
+        .office-sidebar .sidebar-header h3 { font-size: 16px; font-weight: normal; }
+        .office-sidebar .sidebar-header p { font-size: 11px; opacity: 0.7; margin-top: 5px; }
 
-        .office-sidebar::-webkit-scrollbar-track {
-            background: #2d6a4f;
-        }
-
-        .office-sidebar::-webkit-scrollbar-thumb {
-            background: #f1c40f;
-            border-radius: 5px;
-        }
-
-        .office-sidebar .sidebar-header {
-            padding: 20px;
-            border-bottom: 1px solid #2d6a4f;
-        }
-
-        .office-sidebar .sidebar-header h3 {
-            font-size: 16px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-        }
-
-        .office-sidebar .sidebar-header p {
-            font-size: 11px;
-            opacity: 0.7;
-            margin-top: 5px;
-        }
-
-        .office-sidebar .sidebar-menu {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-            padding-bottom: 20px;
-        }
-
-        .office-sidebar .sidebar-menu li {
-            border-bottom: 1px solid #2d6a4f;
-        }
-
+        .office-sidebar .sidebar-menu { list-style: none; padding: 0; margin: 0; padding-bottom: 20px; }
+        .office-sidebar .sidebar-menu li { border-bottom: 1px solid #2d6a4f; }
         .office-sidebar .sidebar-menu a {
             display: block;
             padding: 12px 20px;
             color: white;
             text-decoration: none;
             font-size: 13px;
-            font-family: 'Times New Roman', Times, serif;
-            transition: all 0.3s;
-        }
-
-        .office-sidebar .sidebar-menu a:hover,
-        .office-sidebar .sidebar-menu a.active {
-            background: #f1c40f;
-            color: #000000;
-        }
-
-        /* Uniform Chat Link Style - matches other sidebar links */
-        .office-sidebar .sidebar-menu a.chat-link {
-            display: block;
-            padding: 12px 20px;
-            color: white;
-            text-decoration: none;
-            font-size: 13px;
-            font-family: 'Times New Roman', Times, serif;
             transition: all 0.3s;
             position: relative;
+            pointer-events: auto;
+            cursor: pointer;
         }
+        .office-sidebar .sidebar-menu a:hover,
+        .office-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
 
-        .office-sidebar .sidebar-menu a.chat-link:hover {
-            background: #f1c40f;
-            color: #000000;
-        }
-
-        .office-sidebar .sidebar-menu a.chat-link .chat-badge {
+        .office-sidebar .sidebar-menu a .chat-badge {
             background: #e74c3c;
             color: white;
-            border-radius: 50%;
+            border-radius: 12px;
             padding: 2px 8px;
             font-size: 10px;
             min-width: 20px;
             text-align: center;
             float: right;
-            margin-top: 2px;
             animation: pulse 1.5s infinite;
         }
 
@@ -271,930 +240,362 @@ $declinedSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions
             min-height: calc(100vh - 73px);
         }
 
-        .dashboard-header-bar {
-            background: white;
-            padding: 12px 20px;
-            border: 1px solid #ddd;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .dashboard-header-bar h2 {
-            font-size: 18px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-            color: #1b4d3e;
-        }
-
-        .stats-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 1px;
-            background: #ddd;
-            margin-bottom: 20px;
-            border: 1px solid #ddd;
-        }
-        .stat-card {
-            flex: 1;
-            background: white;
-            padding: 8px 5px;
-            text-align: center;
-            min-width: 100px;
-        }
-        .stat-card .number {
-            font-size: 20px;
-            font-weight: bold;
-            color: #1b4d3e;
-            line-height: 1.2;
-        }
-        .stat-card .label {
-            font-size: 10px;
-            color: #666;
-            margin-top: 2px;
-        }
-
-        .stats-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 1px;
-            background: #ddd;
-            margin-bottom: 20px;
-            border: 1px solid #ddd;
-        }
-        .stats-row .stat-card {
-            flex: 1;
-            background: white;
-            padding: 6px 5px;
-            text-align: center;
-        }
-
-        .content-card {
-            background: white;
-            border: 1px solid #ddd;
-            margin-bottom: 20px;
-        }
-        .content-card-header {
-            background: #f8f9fa;
-            padding: 10px 15px;
-            border-bottom: 1px solid #ddd;
-            font-size: 12px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-        }
-        .content-card-body { padding: 15px; }
-
-        .activity-log { max-height: 300px; overflow-y: auto; }
-        .activity-item { 
-            padding: 8px 12px; 
-            border-bottom: 1px solid #eee; 
-            font-size: 12px; 
-        }
-        .activity-item .time { color: #666; font-size: 10px; margin-top: 3px; }
-        .activity-item .user { font-weight: bold; color: #1b4d3e; }
-        .activity-item:last-child { border-bottom: none; }
-
-        .error { background: #f8d7da; color: #721c24; padding: 10px; margin-bottom: 15px; border-left: 3px solid #e74c3c; }
-        .success { background: #d4edda; color: #155724; padding: 10px; margin-bottom: 15px; border-left: 3px solid #27ae60; }
-
-        .charts-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        .chart-card {
-            background: white;
-            border: 1px solid #ddd;
-            padding: 10px;
-        }
-        .chart-card-header {
-            font-size: 12px;
-            font-weight: bold;
-            color: #1b4d3e;
-            margin-bottom: 10px;
-            padding-bottom: 5px;
-            border-bottom: 1px solid #eee;
-            text-align: center;
-        }
-        canvas { max-height: 150px; width: 100%; }
-
-        .merged-legend {
-            display: flex;
-            justify-content: center;
-            gap: 15px;
-            margin-top: 8px;
-            font-size: 10px;
-            flex-wrap: wrap;
-        }
-        .legend-item {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .legend-color {
-            width: 10px;
-            height: 10px;
-            border-radius: 2px;
-        }
-
-        /* ============================================ */
-        /* EMAIL CONNECTION UI - SAME AS ADMIN */
-        /* ============================================ */
-        .email-connection-card {
-            background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
-            overflow: hidden;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-            transition: all 0.3s ease;
-        }
-        .email-connection-card:hover {
-            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-        }
-        .email-connection-header {
-            padding: 14px 20px;
-            background: #f8f9fa;
-            border-bottom: 1px solid #e0e0e0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        .email-connection-title {
-            font-size: 15px;
-            font-weight: 600;
-            color: #1b4d3e;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .email-connection-title i {
-            color: #1b4d3e;
-        }
-        .status-badge {
-            padding: 4px 14px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 500;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .status-connected {
-            background: #e8f5e9;
-            color: #2e7d32;
-        }
-        .status-disconnected {
-            background: #fce4ec;
-            color: #c62828;
-        }
-        .email-connection-body {
-            padding: 16px 20px;
-        }
-        .email-connected-info {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
-        .email-avatar {
-            flex-shrink: 0;
-        }
-        .avatar-circle {
-            width: 44px;
-            height: 44px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            font-weight: 600;
-            color: white;
-        }
-        .email-details {
-            flex: 1;
-            min-width: 150px;
-        }
-        .email-address {
-            font-size: 15px;
-            font-weight: 500;
-            color: #333;
-        }
-        .email-status {
-            font-size: 12px;
-            color: #666;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            margin-top: 2px;
-        }
-        .dot-connected {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #4caf50;
-            display: inline-block;
-            animation: pulse-green 2s infinite;
-        }
-        @keyframes pulse-green {
-            0% { opacity: 1; }
-            50% { opacity: 0.4; }
-            100% { opacity: 1; }
-        }
-        .email-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-left: auto;
-        }
-        .btn-email-change {
-            padding: 5px 14px;
-            background: #1b4d3e;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 11px;
-            transition: background 0.3s;
-            font-family: 'Times New Roman', Times, serif;
-        }
-        .btn-email-change:hover {
-            background: #2d6a4f;
-        }
-        .email-disconnected {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            gap: 16px;
-            padding: 10px 0;
-        }
-        .email-disconnected-icon {
-            width: 64px;
-            height: 64px;
-            background: #f0f4f3;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 28px;
-            color: #1b4d3e;
-        }
-        .email-disconnected-text h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 4px;
-            font-family: 'Times New Roman', Times, serif;
-        }
-        .email-disconnected-text p {
-            font-size: 13px;
-            color: #666;
-            margin: 0;
-        }
-        .btn-connect-gmail {
-            padding: 10px 28px;
-            background: #4285F4;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            display: inline-flex;
-            align-items: center;
-            gap: 12px;
-            transition: all 0.3s;
-            font-family: 'Times New Roman', Times, serif;
-            box-shadow: 0 2px 8px rgba(66, 133, 244, 0.3);
-        }
-        .btn-connect-gmail:hover {
-            background: #3367D6;
-            transform: scale(1.02);
-            box-shadow: 0 4px 12px rgba(66, 133, 244, 0.4);
-        }
-        .btn-connect-gmail i {
-            font-size: 18px;
-        }
-
-        /* ============================================ */
-        /* EMAIL MODAL - COMPACT, ONLY SIGN IN BUTTON */
-        /* ============================================ */
-        .email-modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 99999;
-            justify-content: center;
-            align-items: center;
-            backdrop-filter: blur(4px);
-        }
-        .email-modal-overlay.active {
-            display: flex;
-        }
-        .email-modal {
-            background: #ffffff;
-            max-width: 380px;
-            width: 92%;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            animation: modalSlideUp 0.3s ease;
-        }
-        @keyframes modalSlideUp {
-            from { opacity: 0; transform: translateY(20px) scale(0.95); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-
-        .email-modal-header {
-            padding: 16px 22px 10px 22px;
-            background: #ffffff;
-            color: #202124;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            border-bottom: none;
-            position: relative;
-        }
-        .email-modal-header h3 {
-            font-size: 17px;
-            font-weight: 500;
-            font-family: 'Times New Roman', Times, serif;
-            color: #202124;
-        }
-        .email-modal-close {
-            position: absolute;
-            right: 16px;
-            top: 12px;
-            background: none;
-            border: none;
-            color: #5f6368;
-            font-size: 24px;
-            cursor: pointer;
-            opacity: 0.6;
-            transition: opacity 0.3s;
-            padding: 4px 8px;
-        }
-        .email-modal-close:hover {
-            opacity: 1;
-        }
-        .email-modal-body {
-            padding: 4px 24px 22px 24px;
-            text-align: center;
-            background: #ffffff;
-        }
-        .email-modal-subtitle {
-            font-size: 13px;
-            color: #5f6368;
-            margin-bottom: 18px;
-            line-height: 1.5;
-            font-family: 'Times New Roman', Times, serif;
-        }
-
-        .btn-google-signin {
-            width: 100%;
-            padding: 12px 18px;
-            background: #ffffff;
-            color: #3c4043;
-            border: 1px solid #dadce0;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 15px;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            transition: all 0.2s;
-            font-family: 'Times New Roman', Times, serif;
-            box-shadow: none;
-        }
-        .btn-google-signin:hover {
-            background: #f8f9fa;
-            border-color: #c6c8ca;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            transform: none;
-        }
-        .btn-google-signin:active {
-            background: #f1f3f4;
-        }
-        .btn-google-signin svg {
-            width: 20px;
-            height: 20px;
-            flex-shrink: 0;
-        }
-        .btn-google-signin .btn-text {
-            color: #3c4043;
-            font-family: 'Times New Roman', Times, serif;
-        }
-
-        .email-modal-footer {
-            margin-top: 14px;
-            padding-top: 12px;
-            border-top: 1px solid #f1f3f4;
-            display: flex;
-            justify-content: center;
-            gap: 12px;
-        }
-        .btn-cancel-modal {
-            padding: 8px 24px;
-            background: #f8f9fa;
-            color: #3c4043;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            font-family: 'Times New Roman', Times, serif;
-            transition: background 0.2s;
-            font-weight: 500;
-        }
-        .btn-cancel-modal:hover {
-            background: #f1f3f4;
-        }
-
-        /* Dark Mode */
-        body.dark-mode .email-modal {
-            background: #202124;
-        }
-        body.dark-mode .email-modal-header {
-            background: #202124;
-        }
-        body.dark-mode .email-modal-header h3 {
-            color: #e8eaed;
-        }
-        body.dark-mode .email-modal-close {
-            color: #9aa0a6;
-        }
-        body.dark-mode .email-modal-body {
-            background: #202124;
-        }
-        body.dark-mode .email-modal-subtitle {
-            color: #9aa0a6;
-        }
-        body.dark-mode .btn-google-signin {
-            background: #2d2e30;
-            border-color: #3c4043;
-            color: #e8eaed;
-        }
-        body.dark-mode .btn-google-signin:hover {
-            background: #3c4043;
-            border-color: #5f6368;
-        }
-        body.dark-mode .btn-google-signin .btn-text {
-            color: #e8eaed;
-        }
-        body.dark-mode .btn-cancel-modal {
-            background: #2d2e30;
-            color: #e8eaed;
-        }
-        body.dark-mode .btn-cancel-modal:hover {
-            background: #3c4043;
-        }
-        body.dark-mode .email-modal-footer {
-            border-top-color: #3c4043;
-        }
-        body.dark-mode .email-connection-card {
-            background: #1a1a1a;
-            border-color: #333;
-        }
-        body.dark-mode .email-connection-header {
-            background: #2c2c2c;
-            border-color: #333;
-        }
-        body.dark-mode .email-connection-title {
-            color: #f1c40f;
-        }
-        body.dark-mode .email-address {
-            color: #fff;
-        }
-        body.dark-mode .email-status {
-            color: #ccc;
-        }
-        body.dark-mode .email-disconnected-icon {
-            background: #2c2c2c;
-            color: #f1c40f;
-        }
-        body.dark-mode .email-disconnected-text h4 {
-            color: #fff;
-        }
-        body.dark-mode .email-disconnected-text p {
-            color: #ccc;
-        }
-
-        body.dark-mode { background: #0a0a0a; }
-        body.dark-mode .main-content { background: #0a0a0a; }
-        body.dark-mode .dashboard-header-bar,
-        body.dark-mode .stat-card,
-        body.dark-mode .chart-card,
-        body.dark-mode .content-card { background: #1a1a1a; border-color: #333; color: #fff; }
-        body.dark-mode .dashboard-header-bar h2 { color: #f1c40f; }
-        body.dark-mode .stat-card .number { color: #f1c40f; }
-        body.dark-mode .stat-card .label { color: #ccc; }
-        body.dark-mode .activity-item { border-bottom-color: #333; color: #fff; }
-        body.dark-mode .activity-item .time { color: #aaa; }
-        body.dark-mode .activity-item .user { color: #f1c40f; }
-        body.dark-mode .office-sidebar::-webkit-scrollbar-track { background: #0f3b2f; }
-
-        @media (max-width: 600px) {
-            .email-connected-info {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-            .email-actions {
-                margin-left: 0;
-                width: 100%;
-            }
-            .email-actions form,
-            .email-actions button {
-                width: 100%;
-                justify-content: center;
-            }
-            .btn-connect-gmail {
-                width: 100%;
-                justify-content: center;
-            }
-        }
-
         @media (max-width: 768px) {
             .office-sidebar { width: 100%; position: relative; height: auto; }
             .main-content { margin-left: 0; }
-            .stats-container { flex-wrap: wrap; }
-            .stats-row { flex-wrap: wrap; }
-            .charts-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-
-        @media (max-width: 480px) {
-            .charts-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
-<body>
+<body class="bg-gray-50 dark:bg-gray-900 transition-colors duration-300 text-gray-800 dark:text-gray-200">
 
-<div class="header">
+<!-- HEADER -->
+<div class="header dark:bg-gray-800">
     <div class="header-logo">
         <img src="https://tse4.mm.bing.net/th/id/OIP._MzqqLuZngO_bDcppKr1wAHaHa?pid=Api&h=220&P=0" alt="CHMSU Logo">
     </div>
     <div class="header-title">
-        <h1>CARLOS HILADO MEMORIAL STATE UNIVERSITY</h1>
-        <p>CLEARANCE SYSTEM | <?php echo strtoupper($office); ?> Portal</p>
+        <h1 class="font-semibold tracking-wide">CARLOS HILADO MEMORIAL STATE UNIVERSITY</h1>
+        <p class="uppercase tracking-widest text-gray-300">CLEARANCE SYSTEM | <?php echo strtoupper($office); ?> Portal</p>
     </div>
-    <button class="dark-mode-toggle" onclick="toggleDarkMode()">Dark Mode</button>
-    <button onclick="confirmLogout()" class="logout-btn">Logout</button>
+    
+    <div class="ml-auto flex items-center gap-4">
+        <button onclick="toggleDarkMode()" class="flex items-center gap-2 px-3 py-1.5 border border-gray-400 dark:border-gray-600 rounded hover:bg-[#2d6a4f] transition-colors text-sm font-medium">
+            <i data-lucide="moon" class="w-4 h-4"></i> Dark Mode
+        </button>
+        <button onclick="confirmLogout()" class="flex items-center gap-2 px-4 py-1.5 bg-red-600 hover:bg-red-700 rounded text-white transition-colors text-sm font-medium shadow-sm">
+            <i data-lucide="log-out" class="w-4 h-4"></i> Logout
+        </button>
+    </div>
 </div>
 
 <div class="dashboard-wrapper">
-    <!-- ============================================ -->
-    <!-- OFFICE SIDEBAR - UNIFORM WITH OTHER PAGES    -->
-    <!-- ============================================ -->
+    <!-- SIDEBAR (Same size, structure & links to prevent blinking) -->
     <div class="office-sidebar">
         <div class="sidebar-header">
             <h3><?php echo htmlspecialchars($office); ?> Portal</h3>
             <p>Clearance Management</p>
         </div>
         <ul class="sidebar-menu">
-            <!-- Dashboard -->
             <li>
                 <a href="?officesection=dashboard" class="active">
-                    <i class="fas fa-tachometer-alt"></i> Dashboard
+                    <i class="fas fa-tachometer-alt w-5"></i> Dashboard
                 </a>
             </li>
-            <!-- Feed Updates -->
             <li>
                 <a href="?officesection=note">
-                    <i class="fas fa-rss"></i> Feed Updates
+                    <i class="fas fa-rss w-5"></i> Feed Updates
                 </a>
             </li>
-            <!-- Clearance -->
             <li>
                 <a href="?officesection=clearance">
-                    <i class="fas fa-clipboard-check"></i> Clearance
+                    <i class="fas fa-clipboard-check w-5"></i> Clearance
                 </a>
             </li>
-            <!-- Reports -->
+            <li>
+                <a href="?officesection=history">
+                    <i class="fas fa-history w-5"></i> Clearance History
+                </a>
+            </li>
             <li>
                 <a href="?officesection=reports">
-                    <i class="fas fa-chart-bar"></i> Reports
+                    <i class="fas fa-chart-bar w-5"></i> Reports
                 </a>
             </li>
-            <!-- ===== CHAT LINK - UNIFORM WITH OTHERS ===== -->
             <li>
                 <a href="?officesection=chat" class="chat-link">
-                    <i class="fas fa-comment-dots"></i> Messages
+                    <i class="fas fa-comment w-5"></i> Messages
                     <?php if ($chat_unread_count > 0): ?>
                         <span class="chat-badge"><?php echo $chat_unread_count; ?></span>
                     <?php endif; ?>
                 </a>
             </li>
-            <!-- ===== END CHAT LINK ===== -->
-            <!-- Logout -->
-            <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
-                <a href="#" onclick="confirmLogout()">
-                    <i class="fas fa-sign-out-alt"></i> Logout
+            <li class="mt-5 border-t border-[#2d6a4f]">
+                <a href="#" onclick="confirmLogout(); return false;">
+                    <i class="fas fa-sign-out-alt w-5"></i> Logout
                 </a>
             </li>
         </ul>
-        <div style="padding: 12px 20px; font-size: 10px; color: #dddddd; border-top: 1px solid #2d6a4f; margin-top: 20px;">
+        <div class="p-4 text-[10px] text-gray-300 border-t border-[#2d6a4f] mt-5">
             Storage: <?php echo formatFileSize($storage_used); ?> / 100MB
-            <div style="width:100%; height:3px; background:#2d6a4f; margin-top:4px; border-radius: 2px;">
-                <div style="width:<?php echo $storage_percent; ?>%; height:100%; background:#f1c40f; border-radius: 2px;"></div>
+            <div class="w-full h-1.5 bg-[#2d6a4f] mt-2 rounded-full overflow-hidden">
+                <div class="h-full bg-yellow-400" style="width:<?php echo $storage_percent; ?>%"></div>
             </div>
         </div>
     </div>
-    <!-- ============================================ -->
-    <!-- END OF SIDEBAR                               -->
-    <!-- ============================================ -->
-    
+
+    <!-- MAIN CONTENT (Using Tailwind & Preline) -->
     <div class="main-content">
-        <div class="dashboard-header-bar">
-            <h2><?php echo htmlspecialchars($office); ?> - Dashboard</h2>
-            <span><?php echo date('F d, Y'); ?></span>
-        </div>
         
-        <?php if ($error): ?>
-            <div class="error"><?php echo $error; ?></div>
+        <!-- Page Header -->
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm mb-6">
+            <div>
+                <h2 class="text-xl font-bold text-gray-800 dark:text-gray-100">
+                    <?php echo htmlspecialchars($office); ?> - Dashboard
+                </h2>
+                <?php if ($currentSem): ?>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-2">
+                        <i data-lucide="calendar" class="w-4 h-4"></i>
+                        Active Semester: <span class="font-bold text-chmsu dark:text-green-400"><?php echo htmlspecialchars($currentSem['semester_name'] . ' ' . (!empty($currentSem['school_year']) ? '· ' . $currentSem['school_year'] : '')); ?></span>
+                    </p>
+                <?php else: ?>
+                    <p class="text-sm text-red-500 mt-1 flex items-center gap-2">
+                        <i data-lucide="alert-triangle" class="w-4 h-4"></i> No active semester set. Stats will show 0.
+                    </p>
+                <?php endif; ?>
+            </div>
+            <span class="mt-3 sm:mt-0 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-4 py-2 rounded-full shadow-inner">
+                <?php echo date('F d, Y'); ?>
+            </span>
+        </div>
+
+        <!-- Flash Messages -->
+        <?php if (isset($error) && $error): ?>
+            <div class="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-r shadow-sm" role="alert">
+                <p><?php echo $error; ?></p>
+            </div>
         <?php endif; ?>
-        <?php if ($success): ?>
-            <div class="success"><?php echo $success; ?></div>
+        <?php if (isset($success) && $success): ?>
+            <div class="bg-green-50 border-l-4 border-green-500 text-green-700 p-4 mb-6 rounded-r shadow-sm" role="alert">
+                <p><?php echo $success; ?></p>
+            </div>
         <?php endif; ?>
 
-        <!-- ============================================ -->
-        <!-- EMAIL CONNECTION UI - SAME AS ADMIN -->
-        <!-- ============================================ -->
-        <div class="email-connection-card">
-            <div class="email-connection-header">
-                <div class="email-connection-title">
-                    <i class="fas fa-envelope"></i>
+        <!-- EMAIL CONNECTION CARD -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm mb-6 overflow-hidden">
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
+                <div class="flex items-center gap-2 font-bold text-chmsu dark:text-green-400 text-sm">
+                    <i data-lucide="mail" class="w-4 h-4"></i>
                     <span>Email Connection</span>
                 </div>
-                <div class="email-connection-status">
-                    <?php if ($has_email): ?>
-                        <span class="status-badge status-connected">
-                            <i class="fas fa-check-circle"></i> Connected
-                        </span>
-                    <?php else: ?>
-                        <span class="status-badge status-disconnected">
-                            <i class="fas fa-exclamation-circle"></i> Not Connected
-                        </span>
-                    <?php endif; ?>
-                </div>
+                <?php if ($has_email): ?>
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold">
+                        <i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Connected
+                    </span>
+                <?php else: ?>
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold">
+                        <i data-lucide="alert-circle" class="w-3.5 h-3.5"></i> Not Connected
+                    </span>
+                <?php endif; ?>
             </div>
-
-            <div class="email-connection-body">
+            <div class="p-5">
                 <?php if ($has_email && $office_info): ?>
-                    <div class="email-connected-info">
-                        <div class="email-avatar">
-                            <?php
-                            $initial = strtoupper(substr($office_info['email'], 0, 1));
-                            $bg_color = ['#1b4d3e', '#2d6a4f', '#f39c12', '#e74c3c', '#3498db', '#9b59b6', '#1abc9c'][rand(0, 6)];
-                            ?>
-                            <div class="avatar-circle" style="background: <?php echo $bg_color; ?>;">
-                                <?php echo $initial; ?>
+                    <div class="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+                        <div class="w-12 h-12 rounded-full flex items-center justify-center text-white text-xl font-bold shrink-0 shadow-md" style="background: <?php echo ['#1b4d3e', '#2d6a4f', '#f39c12', '#e74c3c', '#3498db', '#9b59b6'][rand(0, 5)]; ?>;">
+                            <?php echo strtoupper(substr($office_info['email'], 0, 1)); ?>
+                        </div>
+                        <div class="flex-1 text-center sm:text-left">
+                            <div class="text-base font-semibold text-gray-800 dark:text-gray-200"><?php echo htmlspecialchars($office_info['email']); ?></div>
+                            <div class="text-sm text-green-600 dark:text-green-400 flex items-center justify-center sm:justify-start gap-2 mt-1">
+                                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Connected • OTP Enabled
                             </div>
                         </div>
-                        <div class="email-details">
-                            <div class="email-address"><?php echo htmlspecialchars($office_info['email']); ?></div>
-                            <div class="email-status">
-                                <span class="dot-connected"></span>
-                                <span>Connected • OTP Enabled</span>
-                            </div>
-                        </div>
-                        <div class="email-actions">
-                            <button onclick="openEmailModal()" class="btn-email-change">
-                                <i class="fas fa-edit"></i> Change
-                            </button>
-                        </div>
+                        <button onclick="openEmailModal()" class="mt-3 sm:mt-0 px-4 py-2 bg-chmsu hover:bg-chmsuLight text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-sm">
+                            <i data-lucide="pencil" class="w-4 h-4"></i> Change
+                        </button>
                     </div>
                 <?php else: ?>
-                    <div class="email-disconnected">
-                        <div class="email-disconnected-icon">
-                            <i class="fas fa-envelope-open-text"></i>
+                    <div class="text-center py-4">
+                        <div class="w-16 h-16 mx-auto bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center text-gray-400 mb-4 shadow-inner">
+                            <i data-lucide="mail-open" class="w-8 h-8"></i>
                         </div>
-                        <div class="email-disconnected-text">
-                            <h4>Connect Your Gmail Account</h4>
-                            <p>Connect your Gmail to receive OTP codes and notifications for secure office actions.</p>
-                        </div>
-                        <div>
-                            <button onclick="openEmailModal()" class="btn-connect-gmail">
-                                <i class="fab fa-google"></i> Connect Gmail
-                            </button>
-                        </div>
+                        <h4 class="text-lg font-bold text-gray-800 dark:text-gray-200 mb-2">Connect Your Gmail Account</h4>
+                        <p class="text-sm text-gray-500 dark:text-gray-400 mb-5 max-w-md mx-auto">Connect your Gmail to receive OTP codes and notifications for secure office actions.</p>
+                        <button onclick="openEmailModal()" class="px-6 py-2.5 bg-[#4285F4] hover:bg-[#3367D6] text-white font-medium rounded-lg transition-colors inline-flex items-center gap-3 shadow-md">
+                            <i class="fab fa-google text-lg"></i> Connect Gmail
+                        </button>
                     </div>
                 <?php endif; ?>
             </div>
         </div>
 
-        <!-- ROW 1 STATS -->
-        <div class="stats-container">
-            <div class="stat-card">
-                <div class="number" style="color: #27ae60;"><?php echo $clearCount; ?></div>
-                <div class="label"><i class="fas fa-check-circle"></i> CLEARED</div>
+        <!-- STATS CARDS -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <!-- Cleared -->
+            <div class="bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 rounded-lg bg-green-50 dark:bg-green-900/30 text-green-600 flex items-center justify-center shrink-0">
+                    <i data-lucide="check-circle-2" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-gray-800 dark:text-gray-100"><?php echo $clearCount; ?></div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold mt-1">Cleared</div>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="number" style="color: #e74c3c;"><?php echo $unclearCount; ?></div>
-                <div class="label"><i class="fas fa-times-circle"></i> NOT CLEARED</div>
-            </div>
-            <div class="stat-card">
-                <div class="number" style="color: #f39c12;"><?php echo $pendingCount; ?></div>
-                <div class="label"><i class="fas fa-clock"></i> PENDING</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $clearancePercentage; ?>%</div>
-                <div class="label"><i class="fas fa-chart-line"></i> Clearance Rate</div>
-            </div>
-        </div>
-
-        <!-- ROW 2 STATS -->
-        <div class="stats-row">
-            <div class="stat-card">
-                <div class="number"><?php echo $totalStudents; ?></div>
-                <div class="label"><i class="fas fa-users"></i> Total Students</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $totalRequirements; ?></div>
-                <div class="label"><i class="fas fa-tasks"></i> Requirements</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $totalSubmissions; ?></div>
-                <div class="label"><i class="fas fa-file-upload"></i> Submissions</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $pendingSubmissions; ?></div>
-                <div class="label"><i class="fas fa-hourglass-half"></i> Pending</div>
-            </div>
-        </div>
-
-        <!-- CHARTS SECTION -->
-        <div class="charts-grid">
-            <div class="chart-card">
-                <div class="chart-card-header">Clearance Status</div>
-                <canvas id="clearanceStatusChart"></canvas>
-                <div class="merged-legend">
-                    <span class="legend-item"><span class="legend-color" style="background: #27ae60;"></span> Cleared <?php echo $clearCount; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #e74c3c;"></span> Unclear <?php echo $unclearCount; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #f39c12;"></span> Pending <?php echo $pendingCount; ?></span>
+            
+            <!-- Not Cleared -->
+            <div class="bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 flex items-center justify-center shrink-0">
+                    <i data-lucide="x-circle" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-gray-800 dark:text-gray-100"><?php echo $unclearCount; ?></div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold mt-1">Not Cleared</div>
                 </div>
             </div>
 
-            <div class="chart-card">
-                <div class="chart-card-header">Submission Status</div>
-                <canvas id="submissionStatusChart"></canvas>
-                <div class="merged-legend">
-                    <span class="legend-item"><span class="legend-color" style="background: #f39c12;"></span> Pending <?php echo $pendingSubmissions; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #27ae60;"></span> Approved <?php echo $approvedSubmissions; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #e74c3c;"></span> Declined <?php echo $declinedSubmissions; ?></span>
+            <!-- Pending -->
+            <div class="bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 rounded-lg bg-orange-50 dark:bg-orange-900/30 text-orange-500 flex items-center justify-center shrink-0">
+                    <i data-lucide="clock" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-gray-800 dark:text-gray-100"><?php echo $pendingCount; ?></div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold mt-1">Pending</div>
                 </div>
             </div>
 
-            <div class="chart-card">
-                <div class="chart-card-header">Clearance Progress</div>
-                <canvas id="progressChart"></canvas>
-                <div class="merged-legend">
-                    <span class="legend-item"><span class="legend-color" style="background: #27ae60;"></span> Completed <?php echo $clearCount; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #e74c3c;"></span> Remaining <?php echo max(0, $totalActiveStudents - $clearCount); ?></span>
+            <!-- Rate -->
+            <div class="bg-white dark:bg-gray-800 p-5 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-500 flex items-center justify-center shrink-0">
+                    <i data-lucide="trending-up" class="w-6 h-6"></i>
                 </div>
-            </div>
-
-            <div class="chart-card">
-                <div class="chart-card-header">Activity Overview</div>
-                <canvas id="activityOverviewChart"></canvas>
-                <div class="merged-legend">
-                    <span class="legend-item"><span class="legend-color" style="background: #3498db;"></span> Submissions <?php echo $totalSubmissions; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #e67e22;"></span> Requirements <?php echo $totalRequirements; ?></span>
+                <div>
+                    <div class="text-2xl font-bold text-gray-800 dark:text-gray-100"><?php echo $clearancePercentage; ?>%</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold mt-1">Clearance Rate</div>
                 </div>
             </div>
         </div>
 
-        <!-- RECENT ACTIVITY -->
-        <div class="content-card">
-            <div class="content-card-header"><i class="fas fa-history"></i> Recent Activity</div>
-            <div class="content-card-body">
-                <div class="activity-log">
-                    <?php if ($recentActivities && $recentActivities->num_rows > 0): ?>
-                        <?php while ($log = $recentActivities->fetch_assoc()): ?>
-                            <div class="activity-item">
-                                <div><span class="user"><?php echo htmlspecialchars($log['user_id']); ?></span> - <?php echo htmlspecialchars($log['action']); ?></div>
-                                <div class="time"><?php echo date('M d, Y H:i:s', strtotime($log['created_at'])); ?></div>
+        <!-- CHARTS & ACTIVITY ROW -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            
+            <!-- Doughnut Chart -->
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col">
+                <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2 bg-gray-50 dark:bg-gray-800/50 rounded-t-xl">
+                    <i data-lucide="pie-chart" class="w-4 h-4 text-chmsu dark:text-green-400"></i>
+                    <span class="font-bold text-sm text-gray-700 dark:text-gray-200">Clearance Status</span>
+                </div>
+                <div class="p-5 flex-1 flex flex-col items-center justify-center">
+                    <div class="relative w-48 h-48 mb-4">
+                        <canvas id="clearanceStatusChart"></canvas>
+                        <div class="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">
+                            <span class="text-3xl font-bold text-gray-800 dark:text-gray-100"><?php echo $clearancePercentage; ?>%</span>
+                            <span class="text-xs text-gray-500 uppercase tracking-wide">Complete</span>
+                        </div>
+                    </div>
+                    <div class="w-full space-y-2 mt-2">
+                        <div class="flex items-center justify-between text-sm">
+                            <div class="flex items-center gap-2">
+                                <span class="w-3 h-3 rounded-full bg-[#27ae60]"></span>
+                                <span class="text-gray-600 dark:text-gray-300">Cleared</span>
                             </div>
-                        <?php endwhile; ?>
-                    <?php else: ?>
-                        <div class="activity-item" style="text-align:center; color:#999;">No activity records found.</div>
-                    <?php endif; ?>
+                            <span class="font-bold text-gray-800 dark:text-gray-100"><?php echo $clearCount; ?></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <div class="flex items-center gap-2">
+                                <span class="w-3 h-3 rounded-full bg-[#e74c3c]"></span>
+                                <span class="text-gray-600 dark:text-gray-300">Unclear</span>
+                            </div>
+                            <span class="font-bold text-gray-800 dark:text-gray-100"><?php echo $unclearCount; ?></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <div class="flex items-center gap-2">
+                                <span class="w-3 h-3 rounded-full bg-[#f39c12]"></span>
+                                <span class="text-gray-600 dark:text-gray-300">Pending</span>
+                            </div>
+                            <span class="font-bold text-gray-800 dark:text-gray-100"><?php echo $pendingCount; ?></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- NEW BAR CHART -->
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col lg:col-span-2">
+                <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2 bg-gray-50 dark:bg-gray-800/50 rounded-t-xl">
+                    <i data-lucide="bar-chart-2" class="w-4 h-4 text-chmsu dark:text-green-400"></i>
+                    <span class="font-bold text-sm text-gray-700 dark:text-gray-200">Clearance Progress by Year Level</span>
+                </div>
+                <div class="p-5 flex-1 relative min-h-[300px]">
+                    <canvas id="yearLevelChart"></canvas>
                 </div>
             </div>
         </div>
+
+        <!-- ACTIVITY ROW -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden mb-6">
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2 bg-gray-50 dark:bg-gray-800/50">
+                <i data-lucide="history" class="w-4 h-4 text-chmsu dark:text-green-400"></i>
+                <span class="font-bold text-sm text-gray-700 dark:text-gray-200">Recent Activity</span>
+            </div>
+            <div class="p-0">
+                <?php if ($recentActivities && $recentActivities->num_rows > 0): ?>
+                    <ul class="divide-y divide-gray-100 dark:divide-gray-700">
+                        <?php while ($log = $recentActivities->fetch_assoc()): ?>
+                            <li class="p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors flex items-start gap-4">
+                                <div class="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center shrink-0 mt-0.5">
+                                    <i data-lucide="activity" class="w-4 h-4 text-gray-500"></i>
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-sm text-gray-800 dark:text-gray-200">
+                                        <span class="font-bold text-chmsu dark:text-green-400"><?php echo htmlspecialchars($log['user_id']); ?></span> 
+                                        — <?php echo htmlspecialchars($log['action']); ?>
+                                    </p>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1">
+                                        <i data-lucide="clock" class="w-3 h-3"></i> 
+                                        <?php echo date('M d, Y h:i A', strtotime($log['created_at'])); ?>
+                                    </p>
+                                </div>
+                            </li>
+                        <?php endwhile; ?>
+                    </ul>
+                <?php else: ?>
+                    <div class="p-8 text-center text-gray-500">
+                        <i data-lucide="inbox" class="w-12 h-12 mx-auto text-gray-300 mb-3"></i>
+                        <p>No activity records found.</p>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+
     </div>
 </div>
 
-<!-- ============================================ -->
-<!-- EMAIL MODAL - COMPACT, ONLY SIGN IN BUTTON -->
-<!-- ============================================ -->
-<div class="email-modal-overlay" id="emailModal">
-    <div class="email-modal">
-        <div class="email-modal-header">
-            <h3>Connect Your Email</h3>
-            <button class="email-modal-close" onclick="closeEmailModal()">&times;</button>
+<!-- EMAIL MODAL -->
+<div id="emailModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden transform transition-all">
+        <div class="p-5 text-center relative border-b border-gray-100 dark:border-gray-700">
+            <h3 class="text-xl font-bold text-gray-800 dark:text-gray-200">Connect Your Email</h3>
+            <button onclick="closeEmailModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
         </div>
-        <div class="email-modal-body">
-            <p class="email-modal-subtitle">
+        <div class="p-6 text-center">
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-6">
                 Sign in with your Google account to connect your Gmail and receive OTP codes and notifications.
             </p>
 
-            <button onclick="window.location.href='?officesection=dashboard&google_login=1'" class="btn-google-signin">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="20" height="20">
+            <button onclick="window.location.href='?officesection=dashboard&google_login=1'" class="w-full flex items-center justify-center gap-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors font-semibold shadow-sm">
+                <svg class="w-5 h-5" viewBox="0 0 48 48">
                     <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
                     <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
                     <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
                     <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
                 </svg>
-                <span class="btn-text">Sign in with Google</span>
+                Sign in with Google
             </button>
 
-            <div class="email-modal-footer">
-                <button type="button" class="btn-cancel-modal" onclick="closeEmailModal()">Cancel</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ============================================ -->
-<!-- OTP VERIFICATION MODAL FOR DELETE OPERATIONS -->
-<!-- ============================================ -->
-<div id="otpModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; justify-content:center; align-items:center; font-family:'Times New Roman', Times, serif;">
-    <div style="background:white; max-width:420px; width:90%; padding:30px; border-radius:6px; box-shadow:0 10px 40px rgba(0,0,0,0.3); position:relative;">
-        <div style="position:absolute; top:10px; right:15px; cursor:pointer; font-size:20px; color:#999;" onclick="closeOTPModal()">&times;</div>
-        <h3 style="color:#1b4d3e; margin-bottom:8px; font-weight:normal;">
-            <i class="fas fa-shield-alt" style="color:#f1c40f;"></i> Verify Delete Action
-        </h3>
-        <p style="font-size:12px; color:#666; margin-bottom:15px;">
-            An OTP has been sent to your configured email. Enter it below to confirm deletion.
-        </p>
-
-        <div id="otpStatus" style="padding:8px; margin-bottom:12px; border-radius:4px; display:none;"></div>
-
-        <div style="margin-bottom:15px;">
-            <label style="display:block; font-size:12px; color:#333; margin-bottom:4px;">Item to Delete:</label>
-            <div style="background:#f5f5f5; padding:8px 12px; border-radius:4px; font-size:13px; font-weight:bold; color:#1b4d3e;" id="otpItemName">-</div>
-        </div>
-
-        <div style="margin-bottom:15px;">
-            <label style="display:block; font-size:12px; color:#333; margin-bottom:4px;">Enter OTP Code:</label>
-            <div style="display:flex; gap:8px;">
-                <input type="text" id="otpCodeInput" placeholder="Enter 6-digit OTP" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:4px; font-size:18px; letter-spacing:3px; text-align:center; font-family:'Courier New', monospace;" maxlength="6" autocomplete="off">
-                <button onclick="verifyOTP()" style="background:#1b4d3e; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; font-family:'Times New Roman', Times, serif;">
-                    <i class="fas fa-check"></i> Verify
+            <div class="mt-6">
+                <button type="button" onclick="closeEmailModal()" class="px-6 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+                    Cancel
                 </button>
             </div>
         </div>
-
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-            <span id="otpTimer" style="font-size:11px; color:#e74c3c;">
-                <i class="fas fa-clock"></i> Expires in: <span id="otpCountdown">5:00</span>
-            </span>
-            <button onclick="resendOTP()" style="background:transparent; color:#1b4d3e; border:1px solid #1b4d3e; padding:6px 15px; border-radius:4px; cursor:pointer; font-size:11px; font-family:'Times New Roman', Times, serif;">
-                <i class="fas fa-redo"></i> Resend OTP
-            </button>
-        </div>
-
-        <div style="margin-top:15px; padding-top:12px; border-top:1px solid #eee; display:flex; gap:8px; justify-content:flex-end;">
-            <button onclick="closeOTPModal()" style="background:#95a5a6; color:white; border:none; padding:6px 15px; border-radius:4px; cursor:pointer; font-family:'Times New Roman', Times, serif; font-size:12px;">
-                Cancel
-            </button>
-        </div>
     </div>
 </div>
 
-<form id="otpForm" method="POST" style="display:none;">
-    <input type="hidden" name="action" value="verify_delete_otp">
-    <input type="hidden" name="table" id="otpTable">
-    <input type="hidden" name="item_id" id="otpItemId">
-    <input type="hidden" name="otp_code" id="otpCodeHidden">
-</form>
-
 <script>
-    function toggleDarkMode() {
-        document.body.classList.toggle('dark-mode');
-        const isDarkMode = document.body.classList.contains('dark-mode');
-        localStorage.setItem('darkMode', isDarkMode);
-        const btn = document.querySelector('.dark-mode-toggle');
-        if (btn) {
-            btn.innerHTML = isDarkMode ? '<i class="fas fa-sun"></i> Light Mode' : '<i class="fas fa-moon"></i> Dark Mode';
-        }
-    }
+    lucide.createIcons();
 
-    if (localStorage.getItem('darkMode') === 'true') {
-        document.body.classList.add('dark-mode');
-        const btn = document.querySelector('.dark-mode-toggle');
-        if (btn) {
-            btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
-        }
+    // Dark Mode Logic
+    function toggleDarkMode() {
+        document.documentElement.classList.toggle('dark');
+        const isDarkMode = document.documentElement.classList.contains('dark');
+        localStorage.setItem('darkMode', isDarkMode);
+    }
+    
+    if (localStorage.getItem('darkMode') === 'true' || (!('darkMode' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark');
     }
 
     function confirmLogout() {
@@ -1203,279 +604,108 @@ $declinedSubmissions = $conn->query("SELECT COUNT(*) as c FROM chmsu_submissions
         }
     }
 
-    function openEmailModal() {
-        document.getElementById('emailModal').classList.add('active');
+    // Email Modal Logic
+    function openEmailModal() { 
+        document.getElementById('emailModal').classList.remove('hidden');
+        document.getElementById('emailModal').classList.add('flex');
+    }
+    function closeEmailModal() { 
+        document.getElementById('emailModal').classList.add('hidden');
+        document.getElementById('emailModal').classList.remove('flex');
     }
 
-    function closeEmailModal() {
-        document.getElementById('emailModal').classList.remove('active');
-    }
+    // Chart.js Configuration & Data
+    const isDarkMode = document.documentElement.classList.contains('dark');
+    Chart.defaults.color = isDarkMode ? '#9ca3af' : '#6b7280';
+    Chart.defaults.font.family = "'Times New Roman', Times, serif";
 
-    // Charts
-    new Chart(document.getElementById('clearanceStatusChart'), {
+    // 1. Doughnut Chart
+    const ctxDoughnut = document.getElementById('clearanceStatusChart').getContext('2d');
+    new Chart(ctxDoughnut, {
         type: 'doughnut',
         data: {
             labels: ['Cleared', 'Unclear', 'Pending'],
-            datasets: [{ 
-                data: [<?php echo $clearCount; ?>, <?php echo $unclearCount; ?>, <?php echo $pendingCount; ?>], 
-                backgroundColor: ['#27ae60', '#e74c3c', '#f39c12'], 
-                borderWidth: 0 
+            datasets: [{
+                data: [<?php echo $clearCount; ?>, <?php echo $unclearCount; ?>, <?php echo $pendingCount; ?>],
+                backgroundColor: ['#27ae60', '#e74c3c', '#f39c12'],
+                borderWidth: 0,
+                hoverOffset: 4
             }]
         },
-        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } } }
-    });
-
-    new Chart(document.getElementById('submissionStatusChart'), {
-        type: 'doughnut',
-        data: {
-            labels: ['Pending', 'Approved', 'Declined'],
-            datasets: [{ 
-                data: [<?php echo $pendingSubmissions; ?>, <?php echo $approvedSubmissions; ?>, <?php echo $declinedSubmissions; ?>], 
-                backgroundColor: ['#f39c12', '#27ae60', '#e74c3c'], 
-                borderWidth: 0 
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } } }
-    });
-
-    new Chart(document.getElementById('progressChart'), {
-        type: 'doughnut',
-        data: {
-            labels: ['Completed', 'Remaining'],
-            datasets: [{ 
-                data: [<?php echo $clearCount; ?>, <?php echo max(0, $totalActiveStudents - $clearCount); ?>], 
-                backgroundColor: ['#27ae60', '#e74c3c'], 
-                borderWidth: 0 
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } } }
-    });
-
-    new Chart(document.getElementById('activityOverviewChart'), {
-        type: 'doughnut',
-        data: {
-            labels: ['Submissions', 'Requirements'],
-            datasets: [{ 
-                data: [<?php echo $totalSubmissions; ?>, <?php echo $totalRequirements; ?>], 
-                backgroundColor: ['#3498db', '#e67e22'], 
-                borderWidth: 0 
-            }]
-        },
-        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } } }
-    });
-
-    let otpTimerInterval = null;
-    let otpCountdownSeconds = 300;
-    let currentDeleteData = { table: '', item_id: 0, item_name: '' };
-
-    function openOTPModal(table, itemId, itemName) {
-        currentDeleteData = { table: table, item_id: itemId, item_name: itemName };
-        document.getElementById('otpItemName').textContent = itemName;
-        document.getElementById('otpTable').value = table;
-        document.getElementById('otpItemId').value = itemId;
-        document.getElementById('otpCodeInput').value = '';
-        document.getElementById('otpCodeHidden').value = '';
-        document.getElementById('otpCodeInput').disabled = false;
-        document.getElementById('otpModal').style.display = 'flex';
-        sendOTP(table, itemId, itemName);
-    }
-
-    function closeOTPModal() {
-        document.getElementById('otpModal').style.display = 'none';
-        if (otpTimerInterval) {
-            clearInterval(otpTimerInterval);
-            otpTimerInterval = null;
-        }
-        document.getElementById('otpStatus').style.display = 'none';
-    }
-
-    function sendOTP(table, itemId, itemName) {
-        const statusDiv = document.getElementById('otpStatus');
-        statusDiv.style.display = 'block';
-        statusDiv.style.background = '#f0f8ff';
-        statusDiv.style.color = '#1b4d3e';
-        statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending OTP to your email...';
-
-        fetch('', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=send_delete_otp&table=' + encodeURIComponent(table) + '&item_id=' + itemId + '&item_name=' + encodeURIComponent(itemName)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                statusDiv.style.background = '#d4edda';
-                statusDiv.style.color = '#155724';
-                statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
-                startOTPTimer();
-            } else {
-                statusDiv.style.background = '#f8d7da';
-                statusDiv.style.color = '#721c24';
-                statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
-            }
-        })
-        .catch(error => {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
-            statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Failed to send OTP. Please try again.';
-        });
-    }
-
-    function startOTPTimer() {
-        if (otpTimerInterval) {
-            clearInterval(otpTimerInterval);
-        }
-        otpCountdownSeconds = 300;
-        updateOTPTimerDisplay();
-
-        otpTimerInterval = setInterval(function() {
-            otpCountdownSeconds--;
-            updateOTPTimerDisplay();
-
-            if (otpCountdownSeconds <= 0) {
-                clearInterval(otpTimerInterval);
-                otpTimerInterval = null;
-                const statusDiv = document.getElementById('otpStatus');
-                statusDiv.style.display = 'block';
-                statusDiv.style.background = '#f8d7da';
-                statusDiv.style.color = '#721c24';
-                statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> OTP has expired. Please click "Resend OTP" to get a new code.';
-                document.getElementById('otpCodeInput').disabled = true;
-            }
-        }, 1000);
-    }
-
-    function updateOTPTimerDisplay() {
-        const minutes = Math.floor(otpCountdownSeconds / 60);
-        const seconds = otpCountdownSeconds % 60;
-        document.getElementById('otpCountdown').textContent =
-            String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
-
-        if (otpCountdownSeconds < 60) {
-            document.getElementById('otpCountdown').style.color = '#e74c3c';
-        } else {
-            document.getElementById('otpCountdown').style.color = '#27ae60';
-        }
-    }
-
-    function verifyOTP() {
-        const otpCode = document.getElementById('otpCodeInput').value.trim();
-        if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
-            const statusDiv = document.getElementById('otpStatus');
-            statusDiv.style.display = 'block';
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
-            statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Please enter a valid 6-digit OTP code.';
-            return;
-        }
-
-        const statusDiv = document.getElementById('otpStatus');
-        statusDiv.style.display = 'block';
-        statusDiv.style.background = '#f0f8ff';
-        statusDiv.style.color = '#1b4d3e';
-        statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying OTP...';
-
-        const formData = new FormData();
-        formData.append('action', 'verify_delete_otp');
-        formData.append('otp_code', otpCode);
-        formData.append('table', currentDeleteData.table);
-        formData.append('item_id', currentDeleteData.item_id);
-
-        fetch('', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                statusDiv.style.background = '#d4edda';
-                statusDiv.style.color = '#155724';
-                statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message + ' Refreshing page...';
-
-                if (otpTimerInterval) {
-                    clearInterval(otpTimerInterval);
-                    otpTimerInterval = null;
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '75%',
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    padding: 12,
+                    cornerRadius: 8,
+                    displayColors: false
                 }
-
-                setTimeout(function() {
-                    window.location.reload();
-                }, 1500);
-            } else {
-                statusDiv.style.background = '#f8d7da';
-                statusDiv.style.color = '#721c24';
-                statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
             }
-        })
-        .catch(error => {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
-            statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Verification failed. Please try again.';
-        });
-    }
+        }
+    });
 
-    function resendOTP() {
-        const statusDiv = document.getElementById('otpStatus');
-        statusDiv.style.display = 'block';
-        statusDiv.style.background = '#f0f8ff';
-        statusDiv.style.color = '#1b4d3e';
-        statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending new OTP...';
-
-        document.getElementById('otpCodeInput').disabled = false;
-        document.getElementById('otpCodeInput').value = '';
-
-        fetch('', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=resend_delete_otp&table=' + encodeURIComponent(currentDeleteData.table) + '&item_id=' + currentDeleteData.item_id + '&item_name=' + encodeURIComponent(currentDeleteData.item_name)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                statusDiv.style.background = '#d4edda';
-                statusDiv.style.color = '#155724';
-                statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
-                startOTPTimer();
-            } else {
-                statusDiv.style.background = '#f8d7da';
-                statusDiv.style.color = '#721c24';
-                statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
-            }
-        })
-        .catch(error => {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
-            statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Failed to resend OTP. Please try again.';
-        });
-    }
-
-    document.addEventListener('DOMContentLoaded', function() {
-        const otpInput = document.getElementById('otpCodeInput');
-        if (otpInput) {
-            otpInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    verifyOTP();
+    // 2. Bar Chart (New Analytics)
+    const ctxBar = document.getElementById('yearLevelChart').getContext('2d');
+    new Chart(ctxBar, {
+        type: 'bar',
+        data: {
+            labels: <?php echo json_encode($yearLabels); ?>,
+            datasets: [
+                {
+                    label: 'Cleared',
+                    data: <?php echo json_encode($yearClearData); ?>,
+                    backgroundColor: '#27ae60',
+                    borderRadius: 4,
+                    barPercentage: 0.6,
+                    categoryPercentage: 0.5
+                },
+                {
+                    label: 'Pending / Unclear',
+                    data: <?php echo json_encode($yearPendingData); ?>,
+                    backgroundColor: '#f39c12',
+                    borderRadius: 4,
+                    barPercentage: 0.6,
+                    categoryPercentage: 0.5
                 }
-            });
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        boxWidth: 8,
+                        padding: 20
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    padding: 12,
+                    cornerRadius: 8,
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: { stepSize: 1 },
+                    grid: {
+                        color: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+                        drawBorder: false
+                    }
+                },
+                x: {
+                    grid: { display: false, drawBorder: false }
+                }
+            }
         }
     });
-
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            closeEmailModal();
-            closeOTPModal();
-        }
-    });
-
-    window.onclick = function(e) {
-        const emailModal = document.getElementById('emailModal');
-        const otpModal = document.getElementById('otpModal');
-        if (e.target === emailModal) {
-            closeEmailModal();
-        }
-        if (e.target === otpModal) {
-            closeOTPModal();
-        }
-    };
 </script>
 
 </body>

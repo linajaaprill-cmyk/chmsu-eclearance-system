@@ -73,6 +73,7 @@ if(isset($_POST['action'])) {
             padding: 6px 15px;
             border: none;
             cursor: pointer;
+            text-decoration: none;
         }
         
         .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
@@ -193,6 +194,128 @@ if(isset($_POST['action'])) {
         
         .error { background: #f8d7da; color: #721c24; padding: 10px; margin-bottom: 15px; border-left: 3px solid #e74c3c; }
         .success { background: #d4edda; color: #155724; padding: 10px; margin-bottom: 15px; border-left: 3px solid #27ae60; }
+        
+        /* ============================================ */
+        /* CONFIRM DELETE MODAL - FIRST STEP */
+        /* ============================================ */
+        .confirm-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 99998;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(3px);
+        }
+        .confirm-modal-overlay.active {
+            display: flex;
+        }
+        .confirm-modal {
+            background: #ffffff;
+            max-width: 400px;
+            width: 92%;
+            padding: 22px 24px 18px 24px;
+            border-radius: 10px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+            position: relative;
+            animation: modalFadeIn 0.25s ease;
+            font-family: 'Times New Roman', Times, serif;
+            text-align: center;
+        }
+        .confirm-modal-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: #fdecea;
+            color: #e74c3c;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 12px auto;
+            font-size: 26px;
+        }
+        .confirm-modal h3 {
+            color: #1b4d3e;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 17px;
+            font-family: 'Times New Roman', Times, serif;
+        }
+        .confirm-modal p {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 6px;
+            line-height: 1.5;
+        }
+        .confirm-modal .confirm-item-name {
+            background: #f5f5f5;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #1b4d3e;
+            margin: 10px 0 18px 0;
+            border: 1px solid #e8e8e8;
+            word-break: break-word;
+        }
+        .confirm-modal .confirm-warning {
+            font-size: 11px;
+            color: #e74c3c;
+            font-style: italic;
+            margin-bottom: 16px;
+        }
+        .confirm-modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        .btn-confirm-cancel {
+            padding: 8px 22px;
+            background: #f0f0f0;
+            color: #555;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: 'Times New Roman', Times, serif;
+            transition: background 0.3s;
+            font-weight: 500;
+        }
+        .btn-confirm-cancel:hover { background: #e0e0e0; }
+        .btn-confirm-ok {
+            padding: 8px 22px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: 'Times New Roman', Times, serif;
+            transition: background 0.3s;
+            font-weight: 500;
+        }
+        .btn-confirm-ok:hover { background: #c0392b; }
+        
+        body.dark-mode .confirm-modal {
+            background: #1a1a1a;
+            color: #fff;
+        }
+        body.dark-mode .confirm-modal h3 { color: #f1c40f; }
+        body.dark-mode .confirm-modal p { color: #bbb; }
+        body.dark-mode .confirm-modal .confirm-item-name {
+            background: #2c2c2c;
+            color: #f1c40f;
+            border-color: #444;
+        }
+        body.dark-mode .btn-confirm-cancel {
+            background: #333;
+            color: #ccc;
+        }
+        body.dark-mode .btn-confirm-cancel:hover { background: #444; }
         
         /* ============================================ */
         /* OTP MODAL - WIDER, SHORTER HEIGHT */
@@ -418,7 +541,7 @@ if(isset($_POST['action'])) {
             to { transform: rotate(360deg); }
         }
         
-        /* Status - Green Circle with "Sent" text (no button/square) */
+        /* Status - Green Circle with "Sent" text */
         .otp-status-indicator {
             display: flex;
             align-items: center;
@@ -567,7 +690,7 @@ if(isset($_POST['action'])) {
         <p>CLEARANCE SYSTEM | Admin Portal</p>
     </div>
     <button class="dark-mode-toggle" onclick="toggleDarkMode()">Dark Mode</button>
-    <a href="?logout=1" class="logout-btn" style="text-decoration:none;">Logout</a>
+    <a href="?logout=1" class="logout-btn" onclick="return confirm('Are you sure you want to logout?');">Logout</a>
 </div>
 
 <div class="dashboard-wrapper">
@@ -613,7 +736,7 @@ if(isset($_POST['action'])) {
             </a></li>
             
             <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
-                <a href="?logout=1">
+                <a href="?logout=1" onclick="return confirm('Are you sure you want to logout?');">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </li>
@@ -667,7 +790,7 @@ if(isset($_POST['action'])) {
                     ?>
                     <li>
                         <span><strong><?php echo htmlspecialchars($c['course_code']); ?></strong> - <?php echo htmlspecialchars($c['course_name']); ?></span>
-                        <button type="button" class="btn btn-danger btn-sm" onclick="openOTPModal('courses', <?php echo $c['id']; ?>, '<?php echo addslashes($c['course_code'] . ' - ' . $c['course_name']); ?>')">
+                        <button type="button" class="btn btn-danger btn-sm" onclick="openConfirmDelete('courses', <?php echo $c['id']; ?>, '<?php echo addslashes($c['course_code'] . ' - ' . $c['course_name']); ?>')">
                             <i class="fas fa-trash"></i> Delete
                         </button>
                     </li>
@@ -679,6 +802,27 @@ if(isset($_POST['action'])) {
                     <?php endif; ?>
                 </ul>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- CONFIRM DELETE MODAL - FIRST STEP -->
+<!-- ============================================ -->
+<div class="confirm-modal-overlay" id="confirmModal">
+    <div class="confirm-modal">
+        <div class="confirm-modal-icon">
+            <i class="fas fa-exclamation-triangle"></i>
+        </div>
+        <h3>Are you sure?</h3>
+        <p>You are about to delete the following item:</p>
+        <div class="confirm-item-name" id="confirmItemName">-</div>
+        <p class="confirm-warning">
+            <i class="fas fa-info-circle"></i> This action cannot be undone. You will need to verify with OTP to proceed.
+        </p>
+        <div class="confirm-modal-buttons">
+            <button class="btn-confirm-cancel" onclick="closeConfirmDelete()">Cancel</button>
+            <button class="btn-confirm-ok" onclick="proceedToOTP()">OK, Proceed</button>
         </div>
     </div>
 </div>
@@ -764,6 +908,37 @@ if(isset($_POST['action'])) {
         if (btn) {
             btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
         }
+    }
+
+    // ============================================
+    // CONFIRM DELETE MODAL - FIRST STEP
+    // ============================================
+    let pendingDeleteData = { table: '', item_id: 0, item_name: '' };
+
+    function openConfirmDelete(table, itemId, itemName) {
+        pendingDeleteData = { table: table, item_id: itemId, item_name: itemName };
+        document.getElementById('confirmItemName').textContent = itemName;
+        document.getElementById('confirmModal').classList.add('active');
+    }
+
+    function closeConfirmDelete() {
+        document.getElementById('confirmModal').classList.remove('active');
+        pendingDeleteData = { table: '', item_id: 0, item_name: '' };
+    }
+
+    function proceedToOTP() {
+        // Close confirm modal
+        document.getElementById('confirmModal').classList.remove('active');
+        
+        // Save the data before it gets reset
+        const table = pendingDeleteData.table;
+        const itemId = pendingDeleteData.item_id;
+        const itemName = pendingDeleteData.item_name;
+        
+        // Small delay then open OTP modal
+        setTimeout(function() {
+            openOTPModal(table, itemId, itemName);
+        }, 150);
     }
 
     // ============================================
@@ -1203,14 +1378,19 @@ if(isset($_POST['action'])) {
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeOTPModal();
+                closeConfirmDelete();
             }
         });
     });
 
     window.onclick = function(e) {
-        const modal = document.getElementById('otpModal');
-        if (e.target === modal) {
+        const otpModal = document.getElementById('otpModal');
+        const confirmModal = document.getElementById('confirmModal');
+        if (e.target === otpModal) {
             closeOTPModal();
+        }
+        if (e.target === confirmModal) {
+            closeConfirmDelete();
         }
     };
 </script>

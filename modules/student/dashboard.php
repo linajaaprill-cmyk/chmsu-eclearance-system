@@ -4,120 +4,160 @@ $master = $conn->query("SELECT * FROM chmsu_students_master WHERE chmsu_student_
 $storage_used = getTotalUploadSize();
 $storage_percent = min(($storage_used / (100 * 1024 * 1024)) * 100, 100);
 
-// Get student's current year from database (not from session)
 $current_year_result = $conn->query("SELECT chmsu_year FROM chmsu_students_master WHERE chmsu_student_id='{$_SESSION['student']}'");
 $current_student_year = '1';
 if ($current_year_result && $current_year_result->num_rows > 0) {
     $current_student_year = $current_year_result->fetch_assoc()['chmsu_year'];
 }
 
-// Get all offices with their statuses
+// ============================================
+// NEW: GET CURRENT SEMESTER
+// Dashboard is now semester-aware — every clearance
+// read is scoped to the currently active semester.
+// When the admin changes semester, all stats reset
+// automatically here.
+// ============================================
+$currentSem = null;
+$currentSemId = 0;
+$currentSemName = 'No Active Semester';
+$currentSemSY = '';
+$hasSemCols = false;
+
+$semCheckCol = $conn->query("SHOW COLUMNS FROM chmsu_clearance_status LIKE 'semester_id'");
+if ($semCheckCol && $semCheckCol->num_rows > 0) $hasSemCols = true;
+
+$currentSemRow = $conn->query("SELECT * FROM chmsu_semesters WHERE is_current = 1 LIMIT 1")->fetch_assoc();
+if ($currentSemRow) {
+    $currentSem = $currentSemRow;
+    $currentSemId = intval($currentSemRow['id']);
+    $currentSemName = $currentSemRow['semester_name'];
+    $currentSemSY = $currentSemRow['school_year'] ?? '';
+}
+
+// Get all offices with clearance status scoped to CURRENT semester
 $offices_result = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY office_name");
 $offices = [];
 $officeStatuses = [];
-$officeCounts = [];
-$officeUnreadComments = [];
 $totalOffices = 0;
 $approvedCount = 0;
+$declinedCount = 0;
+$pendingCount = 0;
+
+$semFilter = $hasSemCols ? " AND semester_id = $currentSemId " : "";
 
 while ($office_row = $offices_result->fetch_assoc()) {
     $office = $office_row['office_name'];
     $offices[] = $office;
     $totalOffices++;
-    
-    // Count requirements including NULL year/section (All Years/All Sections)
-    $countQuery = $conn->query("SELECT COUNT(*) as c FROM chmsu_requirements 
-                                WHERE chmsu_office='$office' 
-                                AND chmsu_course='{$student['chmsu_course']}' 
-                                AND (chmsu_year='$current_student_year' OR chmsu_year IS NULL OR chmsu_year = '')
-                                AND (chmsu_section='{$student['chmsu_section']}' OR chmsu_section IS NULL OR chmsu_section = '')");
-    $officeCounts[$office] = $countQuery->fetch_assoc()['c'];
-    
-    // Get status for this office
-    $statusQuery = $conn->query("SELECT s.chmsu_status 
-                                 FROM chmsu_submissions s
-                                 JOIN chmsu_requirements r ON s.chmsu_requirement_id = r.chmsu_id
-                                 WHERE r.chmsu_office = '$office'
-                                 AND s.chmsu_student_id = '{$_SESSION['student']}'
-                                 ORDER BY s.chmsu_id DESC LIMIT 1");
-    if ($statusQuery->num_rows > 0) {
-        $statusRow = $statusQuery->fetch_assoc();
-        $officeStatuses[$office] = $statusRow['chmsu_status'];
-        if ($statusRow['chmsu_status'] == 'Approved') {
+
+    $office_esc = $conn->real_escape_string($office);
+    $student_esc = $conn->real_escape_string($_SESSION['student']);
+
+    $clearanceQ = $conn->query("SELECT status FROM chmsu_clearance_status
+                                WHERE student_id='$student_esc'
+                                AND office_name='$office_esc'
+                                $semFilter
+                                LIMIT 1");
+
+    if ($clearanceQ && $clearanceQ->num_rows > 0) {
+        $row = $clearanceQ->fetch_assoc();
+        if ($row['status'] == 'clear') {
+            $officeStatuses[$office] = 'Approved';
             $approvedCount++;
+        } elseif ($row['status'] == 'unclear') {
+            $officeStatuses[$office] = 'Declined';
+            $declinedCount++;
+        } else {
+            $officeStatuses[$office] = 'Pending';
+            $pendingCount++;
         }
     } else {
         $officeStatuses[$office] = 'Pending';
+        $pendingCount++;
     }
-    
-    // Count unread comments
-    $unreadQuery = $conn->query("SELECT COUNT(*) as c FROM chmsu_comment_notifications 
-                                 WHERE student_id='{$_SESSION['student']}'
-                                 AND office_name='$office'
-                                 AND is_read=0");
-    $officeUnreadComments[$office] = $unreadQuery->fetch_assoc()['c'];
 }
 
-// Check if all offices are approved
 $allApproved = ($approvedCount == $totalOffices && $totalOffices > 0);
-$totalRequirements = array_sum($officeCounts);
-$completedRequirements = 0;
+$progressPercent = ($totalOffices > 0) ? round(($approvedCount / $totalOffices) * 100) : 0;
 
-// Count completed requirements
-foreach ($offices as $office) {
-    if (isset($officeStatuses[$office]) && $officeStatuses[$office] == 'Approved') {
-        $completedRequirements += $officeCounts[$office];
-    }
-}
-
-$progressPercent = ($totalRequirements > 0) ? round(($completedRequirements / $totalRequirements) * 100) : 0;
-
-// Check if student already has email
 $student_email = $student['email'] ?? null;
 $has_email = !empty($student_email);
 
-// Check if Gmail was just connected
 if (isset($_GET['gmail_connected']) && $_GET['gmail_connected'] == 1 && $has_email) {
     $success = "✅ Gmail connected successfully!";
 }
 
-// ============================================
-// NOTIFICATIONS
-// ============================================
+$student_esc = $conn->real_escape_string($_SESSION['student']);
+
 $unread_notifications = $conn->query("
-    SELECT COUNT(*) as c FROM chmsu_notifications 
-    WHERE user_type='student' 
-    AND user_id='{$_SESSION['student']}' 
+    SELECT COUNT(*) as c FROM chmsu_notifications
+    WHERE user_type='student'
+    AND user_id='$student_esc'
     AND is_read=0
 ")->fetch_assoc()['c'];
 
 $latest_notifications = $conn->query("
-    SELECT * FROM chmsu_notifications 
-    WHERE user_type='student' 
-    AND user_id='{$_SESSION['student']}' 
-    ORDER BY created_at DESC 
+    SELECT * FROM chmsu_notifications
+    WHERE user_type='student'
+    AND user_id='$student_esc'
+    ORDER BY created_at DESC
     LIMIT 5
 ");
 
-// Get latest feed posts
 $feed_posts = $conn->query("
-    SELECT f.*, 
+    SELECT f.*,
            (SELECT COUNT(*) FROM chmsu_feed_views WHERE feed_id = f.id) as view_count,
-           (SELECT COUNT(*) FROM chmsu_feed_views WHERE feed_id = f.id AND student_id = '{$_SESSION['student']}') as user_viewed
+           (SELECT COUNT(*) FROM chmsu_feed_views WHERE feed_id = f.id AND student_id = '$student_esc') as user_viewed
     FROM chmsu_feed f
     ORDER BY f.created_at DESC
     LIMIT 5
 ");
 
-// Count unread feed notifications for sidebar
-$unreadFeed = $conn->query("SELECT COUNT(*) as c FROM chmsu_notifications 
-                            WHERE user_type='student' 
-                            AND user_id='{$_SESSION['student']}' 
-                            AND type='feed' 
+$unreadFeed = $conn->query("SELECT COUNT(*) as c FROM chmsu_notifications
+                            WHERE user_type='student'
+                            AND user_id='$student_esc'
+                            AND type='feed'
                             AND is_read=0")->fetch_assoc()['c'];
 
-// Get chat unread count for header badge and sidebar badge
-$chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chmsu_chat_conversations WHERE student_id='{$_SESSION['student']}'")->fetch_assoc()['total'] ?: 0;
+$chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chmsu_chat_conversations WHERE student_id='$student_esc'")->fetch_assoc()['total'] ?: 0;
+
+// ============================================
+// ADDITIONAL USEFUL DASHBOARD DATA
+// ============================================
+$recent_chats = $conn->query("
+    SELECT c.*,
+           (SELECT COUNT(*) FROM chmsu_chat_messages
+            WHERE ((sender_type='office' AND receiver_id='$student_esc' AND sender_id=c.office_name)
+                OR (sender_type='student' AND sender_id='$student_esc' AND receiver_id=c.office_name))) as total_msgs
+    FROM chmsu_chat_conversations c
+    WHERE c.student_id='$student_esc'
+    ORDER BY c.last_message_time DESC
+    LIMIT 3
+");
+
+$attention_offices = [];
+foreach ($officeStatuses as $office => $status) {
+    if ($status === 'Declined') {
+        $attention_offices[] = ['office' => $office, 'status' => 'Declined', 'type' => 'danger'];
+    }
+}
+foreach ($officeStatuses as $office => $status) {
+    if ($status === 'Pending') {
+        $attention_offices[] = ['office' => $office, 'status' => 'Pending', 'type' => 'warning'];
+    }
+}
+
+$latest_feed = null;
+$feed_posts_temp = $conn->query("
+    SELECT f.*,
+           (SELECT COUNT(*) FROM chmsu_feed_views WHERE feed_id = f.id) as view_count
+    FROM chmsu_feed f
+    ORDER BY f.created_at DESC
+    LIMIT 1
+");
+if ($feed_posts_temp && $feed_posts_temp->num_rows > 0) {
+    $latest_feed = $feed_posts_temp->fetch_assoc();
+}
 ?>
 
 <!DOCTYPE html>
@@ -130,7 +170,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Times New Roman', Times, serif; background: #f5f5f5; font-size: 14px; }
-        
+
         .header {
             background: #1b4d3e;
             color: white;
@@ -145,8 +185,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         .header-logo img { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
         .header-title h1 { font-size: 20px; font-weight: normal; }
         .header-title p { font-size: 11px; opacity: 0.8; margin-top: 3px; }
-        
-        /* ===== CHAT ICON IN HEADER ===== */
+
         .chat-header-icon {
             position: relative;
             color: white;
@@ -176,7 +215,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             text-align: center;
             animation: pulse 1.5s infinite;
         }
-        
+
         .dark-mode-toggle {
             background: transparent;
             border: 1px solid rgba(255,255,255,0.3);
@@ -192,9 +231,9 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             border: none;
             cursor: pointer;
         }
-        
+
         .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
-        
+
         .dark-sidebar {
             width: 260px;
             background: #1b4d3e;
@@ -220,8 +259,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         }
         .dark-sidebar .sidebar-menu a:hover,
         .dark-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
-        
-        /* Sidebar badge styles */
+
         .sidebar-badge {
             background: #e74c3c;
             color: white;
@@ -231,7 +269,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             margin-left: 5px;
             animation: pulse 1.5s infinite;
         }
-        
+
         .main-content {
             flex: 1;
             margin-left: 260px;
@@ -252,40 +290,84 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         }
         .info-bar-item { font-size: 12px; }
         .info-bar-item strong { color: #1b4d3e; }
-        
-        .office-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
+
+        /* ============================================ */
+        /* NEW: CURRENT SEMESTER BANNER                 */
+        /* ============================================ */
+        .semester-banner {
+            background: linear-gradient(135deg, #1b4d3e 0%, #2d6a4f 100%);
+            color: white;
+            border-radius: 10px;
+            padding: 20px 24px;
             margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            box-shadow: 0 4px 14px rgba(27, 77, 62, 0.25);
+            flex-wrap: wrap;
         }
-        .office-card {
-            background: white;
-            border-radius: 6px;
-            padding: 15px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s;
-            border: 2px solid transparent;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        .semester-banner .banner-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: rgba(241, 196, 15, 0.2);
+            color: #f1c40f;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            flex-shrink: 0;
         }
-        .office-card.status-pending { border-color: #f39c12; }
-        .office-card.status-approved { border-color: #27ae60; }
-        .office-card.status-declined { border-color: #e74c3c; color: #e74c3c; }
-        .office-card h4 { color: #1b4d3e; font-size: 13px; margin-bottom: 5px; }
-        .office-card .count { font-size: 10px; color: #666; }
-        .office-card .status {
-            display: inline-block;
-            margin-top: 6px;
-            font-size: 9px;
-            font-weight: 600;
-            padding: 3px 6px;
-            border-radius: 3px;
+        .semester-banner .banner-body { flex: 1; min-width: 200px; }
+        .semester-banner .banner-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #f1c40f;
+            font-weight: 700;
+            margin-bottom: 4px;
         }
-        .status-text-pending { background: #f39c12; color: white; }
-        .status-text-approved { background: #27ae60; color: white; }
-        .status-text-declined { background: #e74c3c; color: white; }
-        
+        .semester-banner .banner-title {
+            font-size: 22px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .semester-banner .banner-sub {
+            font-size: 12px;
+            opacity: 0.85;
+            margin-top: 4px;
+        }
+        .semester-banner .banner-badge {
+            background: rgba(241, 196, 15, 0.2);
+            color: #f1c40f;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .semester-banner.no-semester {
+            background: linear-gradient(135deg, #7f8c8d 0%, #95a5a6 100%);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+        }
+        .semester-banner.no-semester .banner-icon {
+            background: rgba(255,255,255,0.2);
+            color: #fff;
+        }
+        .semester-banner.no-semester .banner-label { color: #fff3cd; }
+
+        body.dark-mode .semester-banner {
+            background: linear-gradient(135deg, #0f3b2f 0%, #1b4d3e 100%);
+        }
+        body.dark-mode .semester-banner.no-semester {
+            background: linear-gradient(135deg, #2c2c2c 0%, #3c3c3c 100%);
+        }
+
         .content-card {
             background: white;
             border: 1px solid #ddd;
@@ -302,33 +384,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             align-items: center;
         }
         .content-card-body { padding: 15px; }
-        
-        .office-status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 8px;
-            display: inline-block;
-        }
-        .status-dot-pending { background: #f39c12; }
-        .status-dot-approved { background: #27ae60; }
-        .status-dot-declined { background: #e74c3c; }
-        
-        .office-count {
-            margin-left: auto;
-            font-size: 10px;
-            color: #dddddd;
-        }
-        
-        .notification-dot {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            background: #e74c3c;
-            border-radius: 50%;
-            animation: pulse 1.5s infinite;
-        }
-        
+
         .storage-info {
             padding: 12px 20px;
             font-size: 10px;
@@ -336,13 +392,11 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             border-top: 1px solid #2d6a4f;
             margin-top: 20px;
         }
-        
+
         .error { background: #f8d7da; color: #721c24; padding: 10px; margin-bottom: 15px; border-left: 3px solid #e74c3c; }
         .success { background: #d4edda; color: #155724; padding: 10px; margin-bottom: 15px; border-left: 3px solid #27ae60; }
         .hidden { display: none; }
-        
-        .rejected-name { color: #e74c3c; }
-        
+
         .btn {
             padding: 6px 10px;
             border: none;
@@ -357,8 +411,147 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         }
         .btn-success { background: #27ae60; color: white; }
         .btn-success:hover { background: #229954; }
-        
-        /* ===== EMAIL CONNECTION UI ===== */
+
+        /* ============================================ */
+        /* QUICK STATS GRID                             */
+        /* ============================================ */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 18px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .stat-box:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+        .stat-icon.green  { background: #e8f5e9; color: #2e7d32; }
+        .stat-icon.orange { background: #fff3e0; color: #ef6c00; }
+        .stat-icon.red    { background: #fce4ec; color: #c62828; }
+        .stat-icon.blue   { background: #e3f2fd; color: #1565c0; }
+        .stat-info { flex: 1; min-width: 0; }
+        .stat-value { font-size: 22px; font-weight: 700; color: #1b4d3e; line-height: 1; }
+        .stat-label { font-size: 11px; color: #666; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        /* ============================================ */
+        /* OFFICES STATUS LIST                          */
+        /* ============================================ */
+        .office-list-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .office-list-item:last-child { border-bottom: none; }
+        .office-name-text {
+            flex: 1;
+            font-size: 13px;
+            font-weight: 500;
+            color: #333;
+        }
+        .status-pill {
+            padding: 3px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .status-pill.approved { background: #d4edda; color: #155724; }
+        .status-pill.pending  { background: #fff3cd; color: #856404; }
+        .status-pill.declined { background: #f8d7da; color: #721c24; }
+
+        .attention-item {
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+        .attention-item.danger  { background: #fdecea; color: #721c24; border-left: 3px solid #dc3545; }
+        .attention-item.warning { background: #fff8e1; color: #856404; border-left: 3px solid #f0ad4e; }
+
+        .chat-preview {
+            display: flex;
+            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+            align-items: center;
+        }
+        .chat-preview:last-child { border-bottom: none; }
+        .chat-preview-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: #1b4d3e;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 13px;
+            flex-shrink: 0;
+        }
+        .chat-preview-body { flex: 1; min-width: 0; }
+        .chat-preview-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1b4d3e;
+            margin-bottom: 2px;
+        }
+        .chat-preview-msg {
+            font-size: 12px;
+            color: #666;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .chat-preview-badge {
+            background: #e74c3c;
+            color: white;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+            flex-shrink: 0;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 20px;
+            color: #999;
+            font-size: 12px;
+        }
+        .empty-state i {
+            font-size: 32px;
+            display: block;
+            margin-bottom: 5px;
+            color: #ddd;
+        }
+
         .email-connection-card {
             background: white;
             border: 1px solid #e0e0e0;
@@ -524,7 +717,6 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         }
         .btn-connect-gmail i { font-size: 18px; }
 
-        /* ===== EMAIL MODAL ===== */
         .email-modal-overlay {
             display: none;
             position: fixed;
@@ -650,27 +842,16 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         }
         .btn-cancel-modal:hover { background: #f1f3f4; }
 
-        /* ===== NOTIFICATION DROPDOWN ===== */
-        #notificationDropdown::-webkit-scrollbar {
-            width: 4px;
-        }
-        #notificationDropdown::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 4px;
-        }
-        #notificationDropdown::-webkit-scrollbar-thumb {
-            background: #1b4d3e;
-            border-radius: 4px;
-        }
+        #notificationDropdown::-webkit-scrollbar { width: 4px; }
+        #notificationDropdown::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        #notificationDropdown::-webkit-scrollbar-thumb { background: #1b4d3e; border-radius: 4px; }
 
-        /* ===== ANIMATIONS ===== */
         @keyframes pulse {
             0% { transform: scale(1); }
             50% { transform: scale(1.2); }
             100% { transform: scale(1); }
         }
 
-        /* ===== DARK MODE ===== */
         body.dark-mode .email-modal { background: #202124; }
         body.dark-mode .email-modal-header { background: #202124; }
         body.dark-mode .email-modal-header h3 { color: #e8eaed; }
@@ -693,40 +874,40 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         }
         body.dark-mode .btn-cancel-modal:hover { background: #3c4043; }
         body.dark-mode .email-modal-footer { border-top-color: #3c4043; }
-        body.dark-mode .email-connection-card {
-            background: #1a1a1a;
-            border-color: #333;
-        }
-        body.dark-mode .email-connection-header {
-            background: #2c2c2c;
-            border-color: #333;
-        }
+        body.dark-mode .email-connection-card { background: #1a1a1a; border-color: #333; }
+        body.dark-mode .email-connection-header { background: #2c2c2c; border-color: #333; }
         body.dark-mode .email-connection-title { color: #f1c40f; }
         body.dark-mode .email-address { color: #fff; }
         body.dark-mode .email-status { color: #ccc; }
-        body.dark-mode .email-disconnected-icon {
-            background: #2c2c2c;
-            color: #f1c40f;
-        }
+        body.dark-mode .email-disconnected-icon { background: #2c2c2c; color: #f1c40f; }
         body.dark-mode .email-disconnected-text h4 { color: #fff; }
         body.dark-mode .email-disconnected-text p { color: #ccc; }
 
         body.dark-mode { background: #0a0a0a; }
         body.dark-mode .main-content { background: #0a0a0a; }
         body.dark-mode .info-bar,
-        body.dark-mode .office-card,
         body.dark-mode .content-card,
-        body.dark-mode .email-connection-card { background: #1a1a1a; border-color: #333; color: #fff; }
-        body.dark-mode .office-card h4 { color: #f1c40f; }
-        body.dark-mode .office-card .count { color: #ccc; }
-        
+        body.dark-mode .email-connection-card,
+        body.dark-mode .stat-box { background: #1a1a1a; border-color: #333; color: #fff; }
+        body.dark-mode .stat-value { color: #f1c40f; }
+        body.dark-mode .stat-label { color: #b0b3b8; }
+        body.dark-mode .stat-icon.green  { background: #1b3a24; color: #6fcf97; }
+        body.dark-mode .stat-icon.orange { background: #3a2c1a; color: #f0ad4e; }
+        body.dark-mode .stat-icon.red    { background: #3a1a1a; color: #e57373; }
+        body.dark-mode .stat-icon.blue   { background: #1a2c3a; color: #64b5f6; }
+        body.dark-mode .office-name-text { color: #e4e6eb; }
+        body.dark-mode .office-list-item { border-color: #3e4042; }
+        body.dark-mode .chat-preview { border-color: #3e4042; }
+        body.dark-mode .chat-preview-name { color: #f1c40f; }
+        body.dark-mode .chat-preview-msg { color: #b0b3b8; }
+        body.dark-mode .attention-item.danger  { background: #3a1a1a; color: #ffb3b3; }
+        body.dark-mode .attention-item.warning { background: #3a2c1a; color: #f0ad4e; }
+        body.dark-mode .empty-state { color: #777; }
+
         @media (max-width: 768px) {
             .dark-sidebar { width: 100%; position: relative; height: auto; }
             .main-content { margin-left: 0; }
-            .office-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-        @media (max-width: 480px) {
-            .office-grid { grid-template-columns: 1fr; }
+            .semester-banner { flex-direction: column; align-items: flex-start; }
         }
         @media (max-width: 600px) {
             .email-connected-info { flex-direction: column; align-items: flex-start; }
@@ -745,8 +926,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         <h1>CARLOS HILADO MEMORIAL STATE UNIVERSITY</h1>
         <p>CLEARANCE SYSTEM | Student Portal</p>
     </div>
-    
-    <!-- NOTIFICATION BELL -->
+
     <div style="position: relative; margin-right: 10px;">
         <button onclick="toggleNotifications()" style="background: transparent; border: none; color: white; font-size: 20px; cursor: pointer; position: relative; padding: 5px;">
             <i class="fas fa-bell"></i>
@@ -756,8 +936,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
                 </span>
             <?php endif; ?>
         </button>
-        
-        <!-- NOTIFICATION DROPDOWN -->
+
         <div id="notificationDropdown" style="display: none; position: absolute; right: 0; top: 40px; background: white; min-width: 320px; max-width: 400px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); z-index: 1000; max-height: 400px; overflow-y: auto; padding: 0;">
             <div style="padding: 12px 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; background: #f8f9fa; border-radius: 8px 8px 0 0;">
                 <strong style="color: #1b4d3e; font-size: 14px;"><i class="fas fa-bell"></i> Notifications</strong>
@@ -765,7 +944,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
                     <button onclick="markAllRead()" style="background: transparent; border: none; color: #1b4d3e; font-size: 11px; cursor: pointer; text-decoration: underline;">Mark all read</button>
                 <?php endif; ?>
             </div>
-            
+
             <?php if ($latest_notifications && $latest_notifications->num_rows > 0): ?>
                 <?php while ($notif = $latest_notifications->fetch_assoc()): ?>
                     <div style="padding: 10px 15px; border-bottom: 1px solid #f5f5f5; <?php echo $notif['is_read'] ? 'opacity: 0.7;' : 'background: #f0f8ff;'; ?> cursor: pointer;" onclick="window.location.href='<?php echo $notif['link'] ?: '?view=home'; ?>'">
@@ -788,15 +967,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             <?php endif; ?>
         </div>
     </div>
-    
-    <!-- ===== CHAT ICON IN HEADER ===== -->
-    <a href="?view=chat" class="chat-header-icon" title="Messages">
-        <i class="fas fa-comment-dots"></i>
-        <?php if ($chat_unread_count > 0): ?>
-            <span class="chat-badge"><?php echo $chat_unread_count; ?></span>
-        <?php endif; ?>
-    </a>
-    
+
     <button class="dark-mode-toggle" onclick="toggleDarkMode()">
         <i class="fas fa-moon"></i> Dark Mode
     </button>
@@ -809,14 +980,13 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             <h3><?php echo htmlspecialchars($master['chmsu_full_name']); ?></h3>
             <p><?php echo htmlspecialchars($student['chmsu_course']); ?> <?php echo $student['chmsu_year']; ?><?php echo htmlspecialchars($student['chmsu_section']); ?></p>
         </div>
-        
+
         <ul class="sidebar-menu">
             <li>
                 <a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=home" class="active">
-                    <i class="fas fa-home"></i> Home
+                    <i class="fas fa-home"></i> Dashboard
                 </a>
             </li>
-            <!-- FEED LINK -->
             <li>
                 <a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=feed">
                     <i class="fas fa-rss"></i> Updates Feed
@@ -825,7 +995,6 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
                     <?php endif; ?>
                 </a>
             </li>
-            <!-- ===== CHAT LINK - UNIFORM WITH OTHERS ===== -->
             <li>
                 <a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=chat">
                     <i class="fas fa-comment-dots"></i> Messages
@@ -834,52 +1003,18 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
                     <?php endif; ?>
                 </a>
             </li>
-            <!-- ===== END CHAT LINK ===== -->
-            <li style="border-bottom: none; padding: 8px 12px; color: #dddddd; font-size: 10px;">OFFICES</li>
-            <?php foreach ($offices as $office): 
-                $statusClass = '';
-                $nameClass = '';
-                $isApproved = false;
-                $isDeclined = false;
-                
-                if (isset($officeStatuses[$office])) {
-                    if ($officeStatuses[$office] == 'Approved') {
-                        $statusClass = 'status-dot-approved';
-                        $isApproved = true;
-                    } elseif ($officeStatuses[$office] == 'Declined') {
-                        $statusClass = 'status-dot-declined';
-                        $nameClass = 'rejected-name';
-                        $isDeclined = true;
-                    } else {
-                        $statusClass = 'status-dot-pending';
-                    }
-                }
-                $hasUnread = isset($officeUnreadComments[$office]) && $officeUnreadComments[$office] > 0;
-            ?>
             <li>
-                <a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=office&office=<?php echo urlencode($office); ?>" 
-                   class="<?php echo $nameClass; ?>" style="position: relative;">
-                    <span class="office-status-dot <?php echo $statusClass; ?>"></span>
-                    <span><?php echo htmlspecialchars($office); ?></span>
-                    <span class="office-count"><?php echo $officeCounts[$office]; ?></span>
-                    <?php if ($isApproved): ?>
-                        <i class="fas fa-check-circle" style="color: #27ae60; margin-left: 5px; font-size: 10px;"></i>
-                    <?php elseif ($isDeclined): ?>
-                        <i class="fas fa-times-circle" style="color: #e74c3c; margin-left: 5px; font-size: 10px;"></i>
-                    <?php endif; ?>
-                    <?php if ($hasUnread): ?>
-                        <span class="notification-dot" style="position: absolute; right: 5px; top: 50%; transform: translateY(-50%);"></span>
-                    <?php endif; ?>
+                <a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=office">
+                    <i class="fas fa-clipboard-check"></i> OFFICES
                 </a>
             </li>
-            <?php endforeach; ?>
             <li style="margin-top: 15px; border-top: 1px solid #2d6a4f;">
                 <a href="#" onclick="confirmLogout(); return false;">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </li>
         </ul>
-        
+
         <div class="storage-info">
             <i class="fas fa-database"></i> Storage: <?php echo formatFileSize($storage_used); ?> / 100MB
             <div style="width: 100%; height: 3px; background: #2d6a4f; border-radius: 2px; margin-top: 4px;">
@@ -887,7 +1022,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             </div>
         </div>
     </div>
-    
+
     <div class="main-content">
         <div class="info-bar">
             <div class="info-bar-item"><strong>ID:</strong> <?php echo htmlspecialchars($student['chmsu_student_id']); ?></div>
@@ -895,17 +1030,78 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             <div class="info-bar-item"><strong>Course/Year/Section:</strong> <?php echo htmlspecialchars($student['chmsu_course']); ?> <?php echo $student['chmsu_year']; ?><?php echo htmlspecialchars($student['chmsu_section']); ?></div>
             <div class="info-bar-item"><strong>Storage:</strong> <?php echo formatFileSize($storage_used); ?> / 100MB</div>
         </div>
-        
+
+        <!-- ============================================ -->
+        <!-- NEW: CURRENT SEMESTER BANNER                 -->
+        <!-- Always shows what semester is now            -->
+        <!-- ============================================ -->
+        <div class="semester-banner <?php echo $currentSem ? '' : 'no-semester'; ?>">
+            <div class="banner-icon">
+                <i class="fas fa-calendar-alt"></i>
+            </div>
+            <div class="banner-body">
+                <div class="banner-label"><i class="fas fa-circle" style="font-size: 6px; vertical-align: middle;"></i> Current Semester</div>
+                <div class="banner-title"><?php echo htmlspecialchars($currentSemName); ?></div>
+                <div class="banner-sub">
+                    <?php if ($currentSem): ?>
+                        <?php if (!empty($currentSemSY)): ?>
+                            <i class="fas fa-graduation-cap"></i> School Year <?php echo htmlspecialchars($currentSemSY); ?>
+                            &nbsp;·&nbsp;
+                        <?php endif; ?>
+                        <i class="fas fa-check-circle"></i> Active clearance period
+                    <?php else: ?>
+                        <i class="fas fa-exclamation-triangle"></i> No semester is currently active. Please contact the administrator.
+                    <?php endif; ?>
+                </div>
+            </div>
+            <?php if ($currentSem): ?>
+                <span class="banner-badge">
+                    <i class="fas fa-play-circle"></i> ACTIVE NOW
+                </span>
+            <?php endif; ?>
+        </div>
+
         <?php if ($error): ?>
             <div class="error"><?php echo $error; ?></div>
         <?php endif; ?>
         <?php if ($success): ?>
             <div class="success"><?php echo $success; ?></div>
         <?php endif; ?>
-        
+
         <!-- ============================================ -->
-        <!-- EMAIL CONNECTION UI -->
+        <!-- QUICK STATS (scoped to current semester)     -->
         <!-- ============================================ -->
+        <div class="stats-grid">
+            <div class="stat-box">
+                <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
+                <div class="stat-info">
+                    <div class="stat-value"><?php echo $approvedCount; ?></div>
+                    <div class="stat-label">Approved Offices</div>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
+                <div class="stat-info">
+                    <div class="stat-value"><?php echo $pendingCount; ?></div>
+                    <div class="stat-label">Pending Offices</div>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-icon red"><i class="fas fa-times-circle"></i></div>
+                <div class="stat-info">
+                    <div class="stat-value"><?php echo $declinedCount; ?></div>
+                    <div class="stat-label">Declined Offices</div>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-icon blue"><i class="fas fa-comment-dots"></i></div>
+                <div class="stat-info">
+                    <div class="stat-value"><?php echo intval($chat_unread_count); ?></div>
+                    <div class="stat-label">Unread Messages</div>
+                </div>
+            </div>
+        </div>
+
         <div class="email-connection-card">
             <div class="email-connection-header">
                 <div class="email-connection-title">
@@ -968,109 +1164,132 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
                 <?php endif; ?>
             </div>
         </div>
-        
-        <!-- Clearance Progress Bar -->
-        <div class="content-card" style="margin-bottom: 20px;">
-            <div class="content-card-header">
-                <span><i class="fas fa-chart-line"></i> Clearance Progress</span>
-                <span><?php echo $approvedCount; ?> / <?php echo $totalOffices; ?> Offices Approved</span>
-            </div>
-            <div class="content-card-body">
-                <div style="margin-bottom: 10px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                        <span>Overall Progress</span>
-                        <span><?php echo $progressPercent; ?>%</span>
+
+        <!-- ============================================ -->
+        <!-- PROGRESS + ATTENTION                         -->
+        <!-- ============================================ -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+            <div class="content-card" style="margin-bottom: 0;">
+                <div class="content-card-header">
+                    <span><i class="fas fa-chart-line"></i> Clearance Progress</span>
+                    <span><?php echo $approvedCount; ?> / <?php echo $totalOffices; ?> Approved</span>
+                </div>
+                <div class="content-card-body">
+                    <div style="margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px;">
+                            <span>Overall Progress</span>
+                            <strong style="color: #1b4d3e;"><?php echo $progressPercent; ?>%</strong>
+                        </div>
+                        <div style="width: 100%; height: 12px; background: #e0e0e0; border-radius: 6px; overflow: hidden;">
+                            <div style="width: <?php echo $progressPercent; ?>%; height: 100%; background: #27ae60; border-radius: 6px; transition: width 0.5s;"></div>
+                        </div>
                     </div>
-                    <div style="width: 100%; height: 10px; background: #e0e0e0; border-radius: 5px; overflow: hidden;">
-                        <div style="width: <?php echo $progressPercent; ?>%; height: 100%; background: #27ae60; border-radius: 5px;"></div>
+                    <div style="display: flex; gap: 15px; font-size: 12px; flex-wrap: wrap;">
+                        <div><span style="color: #27ae60;">●</span> Approved: <strong><?php echo $approvedCount; ?></strong></div>
+                        <div><span style="color: #f39c12;">●</span> Pending: <strong><?php echo $pendingCount; ?></strong></div>
+                        <div><span style="color: #e74c3c;">●</span> Declined: <strong><?php echo $declinedCount; ?></strong></div>
                     </div>
                 </div>
-                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
-                    <?php foreach ($offices as $office): 
-                        $status = isset($officeStatuses[$office]) ? $officeStatuses[$office] : 'Pending';
-                        $statusColor = '';
-                        if ($status == 'Approved') $statusColor = '#27ae60';
-                        elseif ($status == 'Declined') $statusColor = '#e74c3c';
-                        else $statusColor = '#f39c12';
-                    ?>
-                    <div style="display: flex; align-items: center; gap: 5px;">
-                        <div style="width: 10px; height: 10px; background: <?php echo $statusColor; ?>; border-radius: 50%;"></div>
-                        <span style="font-size: 10px;"><?php echo htmlspecialchars($office); ?></span>
-                    </div>
-                    <?php endforeach; ?>
+            </div>
+
+            <div class="content-card" style="margin-bottom: 0;">
+                <div class="content-card-header">
+                    <span><i class="fas fa-exclamation-triangle"></i> Needs Your Attention</span>
+                    <span style="font-size: 12px;"><?php echo count($attention_offices); ?> item<?php echo count($attention_offices) !== 1 ? 's' : ''; ?></span>
+                </div>
+                <div class="content-card-body" style="max-height: 200px; overflow-y: auto;">
+                    <?php if (empty($attention_offices)): ?>
+                        <div class="empty-state">
+                            <i class="fas fa-check-circle"></i>
+                            All clear! No pending items.
+                        </div>
+                    <?php else: ?>
+                        <?php foreach (array_slice($attention_offices, 0, 5) as $item): ?>
+                            <div class="attention-item <?php echo $item['type']; ?>">
+                                <?php if ($item['type'] === 'danger'): ?>
+                                    <i class="fas fa-times-circle"></i>
+                                    <strong><?php echo htmlspecialchars($item['office']); ?></strong> — <?php echo $item['status']; ?>
+                                <?php else: ?>
+                                    <i class="fas fa-clock"></i>
+                                    <strong><?php echo htmlspecialchars($item['office']); ?></strong> — <?php echo $item['status']; ?>
+                                <?php endif; ?>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
-        
-        <h2 style="margin-bottom: 15px; font-size: 16px;">My Clearance</h2>
-        <div class="office-grid">
-            <?php foreach ($offices as $office): 
-                $statusClass = '';
-                $statusTextClass = 'status-text-pending';
-                $nameClass = '';
-                $isClickable = true;
-                
-                if (isset($officeStatuses[$office])) {
-                    if ($officeStatuses[$office] == 'Approved') {
-                        $statusClass = 'status-approved';
-                        $statusTextClass = 'status-text-approved';
-                    } elseif ($officeStatuses[$office] == 'Declined') {
-                        $statusClass = 'status-declined';
-                        $statusTextClass = 'status-text-declined';
-                        $nameClass = 'rejected-name';
-                    }
-                }
-                $hasUnread = isset($officeUnreadComments[$office]) && $officeUnreadComments[$office] > 0;
-            ?>
-            <div class="office-card <?php echo $statusClass; ?> <?php echo $nameClass; ?>" 
-                 onclick="window.location.href='?view=office&office=<?php echo urlencode($office); ?>'" 
-                 style="position: relative; cursor: pointer;">
-                <h4><?php echo htmlspecialchars($office); ?></h4>
-                <span class="count"><?php echo $officeCounts[$office]; ?> Requirements</span>
-                <span class="status <?php echo $statusTextClass; ?>"><?php echo $officeStatuses[$office]; ?></span>
-                <?php if ($hasUnread): ?>
-                    <span class="notification-dot" style="position: absolute; top: 10px; right: 10px;"></span>
-                <?php endif; ?>
-            </div>
-            <?php endforeach; ?>
-        </div>
-        
-        <!-- CERTIFICATE SECTION - Only shows when ALL offices are approved -->
+
+        <!-- ============================================ -->
+        <!-- FULLY CLEARED BANNER                         -->
+        <!-- ============================================ -->
         <?php if ($allApproved): ?>
-        <div class="content-card" style="margin-top: 20px; border: 2px solid #27ae60;">
-            <div class="content-card-header" style="background: #27ae60; color: white;">
-                <span><i class="fas fa-certificate"></i> Clearance Certificate</span>
-                <span><i class="fas fa-check-circle"></i> COMPLETED</span>
-            </div>
-            <div class="content-card-body" style="text-align: center; padding: 20px;">
-                <i class="fas fa-trophy" style="font-size: 48px; color: #f1c40f; margin-bottom: 10px;"></i>
-                <h3 style="color: #27ae60; margin-bottom: 10px;">Congratulations!</h3>
-                <p>You have successfully completed all clearance requirements for all offices.</p>
-                <p style="margin-bottom: 15px;">You are now eligible to receive your Certificate of Completion.</p>
-                <a href="?print_certificate=<?php echo $_SESSION['student']; ?>" target="_blank" class="btn btn-success" style="padding: 10px 20px; font-size: 14px;">
-                    <i class="fas fa-print"></i> Print Certificate
-                </a>
-            </div>
-        </div>
-        <?php elseif ($approvedCount > 0): ?>
-        <div class="content-card" style="margin-top: 20px; background: #f8f9fa;">
-            <div class="content-card-header">
-                <span><i class="fas fa-info-circle"></i> Certificate Status</span>
-            </div>
-            <div class="content-card-body" style="text-align: center; padding: 15px;">
-                <i class="fas fa-lock" style="font-size: 36px; color: #f39c12; margin-bottom: 10px;"></i>
-                <p>Certificate will be available when <strong>ALL offices</strong> have approved your requirements.</p>
-                <p>Currently approved: <strong><?php echo $approvedCount; ?> / <?php echo $totalOffices; ?></strong> offices</p>
-                <div style="width: 100%; height: 8px; background: #e0e0e0; border-radius: 4px; margin-top: 10px;">
-                    <div style="width: <?php echo ($approvedCount / $totalOffices) * 100; ?>%; height: 100%; background: #f39c12; border-radius: 4px;"></div>
-                </div>
+        <div class="content-card" style="margin-bottom: 20px; border: 2px solid #27ae60; background: #27ae60;">
+            <div class="content-card-body" style="text-align: center; padding: 30px 20px; color: white;">
+                <div style="font-size: 48px; margin-bottom: 10px;">🎉</div>
+                <h3 style="margin-bottom: 10px; font-size: 22px;">You are fully cleared!</h3>
+                <p>All offices have approved your clearance for <strong><?php echo htmlspecialchars($currentSemName); ?></strong>.</p>
             </div>
         </div>
         <?php endif; ?>
-        
+
         <!-- ============================================ -->
-        <!-- LATEST UPDATES FEED -->
+        <!-- OFFICE STATUS LIST (scoped to current sem)   -->
         <!-- ============================================ -->
+        <div class="content-card" style="margin-bottom: 20px;">
+            <div class="content-card-header">
+                <span><i class="fas fa-building"></i> Office Clearance Status — <?php echo htmlspecialchars($currentSemName); ?></span>
+                <span style="font-size: 12px;"><?php echo $totalOffices; ?> office<?php echo $totalOffices !== 1 ? 's' : ''; ?></span>
+            </div>
+            <div class="content-card-body">
+                <?php if (empty($officeStatuses)): ?>
+                    <div class="empty-state">
+                        <i class="fas fa-building"></i>
+                        No offices configured yet.
+                    </div>
+                <?php else: ?>
+                    <?php foreach ($officeStatuses as $office => $status):
+                        $pillClass = $status === 'Approved' ? 'approved' : ($status === 'Declined' ? 'declined' : 'pending');
+                    ?>
+                        <div class="office-list-item">
+                            <div class="office-name-text"><?php echo htmlspecialchars($office); ?></div>
+                            <span class="status-pill <?php echo $pillClass; ?>"><?php echo $status; ?></span>
+                        </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- ============================================ -->
+        <!-- RECENT CHATS                                 -->
+        <!-- ============================================ -->
+        <?php if ($recent_chats && $recent_chats->num_rows > 0): ?>
+        <div class="content-card" style="margin-bottom: 20px;">
+            <div class="content-card-header">
+                <span><i class="fas fa-comments"></i> Recent Messages</span>
+                <a href="?view=chat" style="font-size: 12px; color: #1b4d3e;">View All →</a>
+            </div>
+            <div class="content-card-body">
+                <?php while ($chat = $recent_chats->fetch_assoc()):
+                    $officeName = $chat['office_name'];
+                    $initial = strtoupper(substr($officeName, 0, 1));
+                    $lastMsg = $chat['last_message'] ?: 'No message yet';
+                ?>
+                    <div class="chat-preview">
+                        <div class="chat-preview-avatar"><?php echo $initial; ?></div>
+                        <div class="chat-preview-body">
+                            <div class="chat-preview-name"><?php echo htmlspecialchars($officeName); ?></div>
+                            <div class="chat-preview-msg"><?php echo htmlspecialchars(substr($lastMsg, 0, 60)); ?></div>
+                        </div>
+                        <?php if (intval($chat['student_unread']) > 0): ?>
+                            <span class="chat-preview-badge"><?php echo intval($chat['student_unread']); ?></span>
+                        <?php endif; ?>
+                    </div>
+                <?php endwhile; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <div class="content-card" style="margin-top: 20px;">
             <div class="content-card-header" style="display: flex; justify-content: space-between; align-items: center;">
                 <span><i class="fas fa-rss"></i> <strong>Latest Updates</strong></span>
@@ -1078,7 +1297,7 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
             </div>
             <div class="content-card-body">
                 <?php if ($feed_posts && $feed_posts->num_rows > 0): ?>
-                    <?php while ($post = $feed_posts->fetch_assoc()): 
+                    <?php while ($post = $feed_posts->fetch_assoc()):
                         $priorityColor = $post['priority'] == 'urgent' ? '#8e44ad' : ($post['priority'] == 'high' ? '#e74c3c' : ($post['priority'] == 'medium' ? '#f39c12' : '#3498db'));
                     ?>
                     <div style="padding: 12px; border-bottom: 1px solid #eee; border-left: 3px solid <?php echo $priorityColor; ?>; margin-bottom: 5px;">
@@ -1088,11 +1307,6 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
                                     <strong style="color: #1b4d3e;">
                                         <i class="fas fa-building"></i> <?php echo htmlspecialchars($post['office_name']); ?>
                                     </strong>
-                                    <?php if ($post['priority'] == 'urgent'): ?>
-                                        <span style="background: #8e44ad; color: white; padding: 1px 8px; border-radius: 10px; font-size: 8px; margin-left: 5px;">URGENT</span>
-                                    <?php elseif ($post['priority'] == 'high'): ?>
-                                        <span style="background: #e74c3c; color: white; padding: 1px 8px; border-radius: 10px; font-size: 8px; margin-left: 5px;">HIGH</span>
-                                    <?php endif; ?>
                                     <span style="font-size: 10px; color: #999; margin-left: 8px;"><?php echo date('M d, Y', strtotime($post['created_at'])); ?></span>
                                 </div>
                                 <div style="font-size: 14px; font-weight: bold; color: #1b4d3e; margin-top: 2px;">
@@ -1101,9 +1315,6 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
                                 <div style="font-size: 12px; color: #555; margin-top: 3px; line-height: 1.4;">
                                     <?php echo substr(htmlspecialchars($post['content']), 0, 100); ?>...
                                 </div>
-                            </div>
-                            <div style="font-size: 10px; color: #999; text-align: right; min-width: 60px;">
-                                <span><i class="fas fa-eye"></i> <?php echo $post['view_count']; ?></span>
                             </div>
                         </div>
                     </div>
@@ -1119,9 +1330,6 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
     </div>
 </div>
 
-<!-- ============================================ -->
-<!-- EMAIL MODAL - GOOGLE SIGN IN -->
-<!-- ============================================ -->
 <div class="email-modal-overlay" id="emailModal">
     <div class="email-modal">
         <div class="email-modal-header">
@@ -1149,60 +1357,6 @@ $chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chms
         </div>
     </div>
 </div>
-
-<!-- ============================================ -->
-<!-- OTP VERIFICATION MODAL -->
-<!-- ============================================ -->
-<div id="otpModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; justify-content:center; align-items:center; font-family:'Times New Roman', Times, serif;">
-    <div style="background:white; max-width:420px; width:90%; padding:30px; border-radius:6px; box-shadow:0 10px 40px rgba(0,0,0,0.3); position:relative;">
-        <div style="position:absolute; top:10px; right:15px; cursor:pointer; font-size:20px; color:#999;" onclick="closeOTPModal()">&times;</div>
-        <h3 style="color:#1b4d3e; margin-bottom:8px; font-weight:normal;">
-            <i class="fas fa-shield-alt" style="color:#f1c40f;"></i> Verify Delete Action
-        </h3>
-        <p style="font-size:12px; color:#666; margin-bottom:15px;">
-            An OTP has been sent to your configured email. Enter it below to confirm deletion.
-        </p>
-
-        <div id="otpStatus" style="padding:8px; margin-bottom:12px; border-radius:4px; display:none;"></div>
-
-        <div style="margin-bottom:15px;">
-            <label style="display:block; font-size:12px; color:#333; margin-bottom:4px;">Item to Delete:</label>
-            <div style="background:#f5f5f5; padding:8px 12px; border-radius:4px; font-size:13px; font-weight:bold; color:#1b4d3e;" id="otpItemName">-</div>
-        </div>
-
-        <div style="margin-bottom:15px;">
-            <label style="display:block; font-size:12px; color:#333; margin-bottom:4px;">Enter OTP Code:</label>
-            <div style="display:flex; gap:8px;">
-                <input type="text" id="otpCodeInput" placeholder="Enter 6-digit OTP" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:4px; font-size:18px; letter-spacing:3px; text-align:center; font-family:'Courier New', monospace;" maxlength="6" autocomplete="off">
-                <button onclick="verifyOTP()" style="background:#1b4d3e; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; font-family:'Times New Roman', Times, serif;">
-                    <i class="fas fa-check"></i> Verify
-                </button>
-            </div>
-        </div>
-
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-            <span id="otpTimer" style="font-size:11px; color:#e74c3c;">
-                <i class="fas fa-clock"></i> Expires in: <span id="otpCountdown">5:00</span>
-            </span>
-            <button onclick="resendOTP()" style="background:transparent; color:#1b4d3e; border:1px solid #1b4d3e; padding:6px 15px; border-radius:4px; cursor:pointer; font-size:11px; font-family:'Times New Roman', Times, serif;">
-                <i class="fas fa-redo"></i> Resend OTP
-            </button>
-        </div>
-
-        <div style="margin-top:15px; padding-top:12px; border-top:1px solid #eee; display:flex; gap:8px; justify-content:flex-end;">
-            <button onclick="closeOTPModal()" style="background:#95a5a6; color:white; border:none; padding:6px 15px; border-radius:4px; cursor:pointer; font-family:'Times New Roman', Times, serif; font-size:12px;">
-                Cancel
-            </button>
-        </div>
-    </div>
-</div>
-
-<form id="otpForm" method="POST" style="display:none;">
-    <input type="hidden" name="action" value="verify_delete_otp">
-    <input type="hidden" name="table" id="otpTable">
-    <input type="hidden" name="item_id" id="otpItemId">
-    <input type="hidden" name="otp_code" id="otpCodeHidden">
-</form>
 
 <script>
 function toggleDarkMode() {
@@ -1237,7 +1391,6 @@ function closeEmailModal() {
     document.getElementById('emailModal').classList.remove('active');
 }
 
-// Close modal when clicking outside
 window.onclick = function(e) {
     const modal = document.getElementById('emailModal');
     if (e.target === modal) {
@@ -1245,16 +1398,12 @@ window.onclick = function(e) {
     }
 };
 
-// Close modal with Escape key
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeEmailModal();
     }
 });
 
-// ============================================
-// NOTIFICATION FUNCTIONS
-// ============================================
 function toggleNotifications() {
     var dropdown = document.getElementById('notificationDropdown');
     if (dropdown.style.display === 'none' || dropdown.style.display === '') {
@@ -1274,7 +1423,6 @@ function markAllRead() {
     });
 }
 
-// Close notification dropdown when clicking outside
 document.addEventListener('click', function(e) {
     var dropdown = document.getElementById('notificationDropdown');
     var bell = document.querySelector('[onclick="toggleNotifications()"]');
@@ -1284,190 +1432,6 @@ document.addEventListener('click', function(e) {
         }
     }
 });
-
-let otpTimerInterval = null;
-let otpCountdownSeconds = 300;
-let currentDeleteData = { table: '', item_id: 0, item_name: '' };
-
-function openOTPModal(table, itemId, itemName) {
-    currentDeleteData = { table: table, item_id: itemId, item_name: itemName };
-    document.getElementById('otpItemName').textContent = itemName;
-    document.getElementById('otpTable').value = table;
-    document.getElementById('otpItemId').value = itemId;
-    document.getElementById('otpCodeInput').value = '';
-    document.getElementById('otpCodeHidden').value = '';
-    document.getElementById('otpCodeInput').disabled = false;
-    document.getElementById('otpModal').style.display = 'flex';
-    sendOTP(table, itemId, itemName);
-}
-
-function closeOTPModal() {
-    document.getElementById('otpModal').style.display = 'none';
-    if (otpTimerInterval) {
-        clearInterval(otpTimerInterval);
-        otpTimerInterval = null;
-    }
-    document.getElementById('otpStatus').style.display = 'none';
-}
-
-function sendOTP(table, itemId, itemName) {
-    const statusDiv = document.getElementById('otpStatus');
-    statusDiv.style.display = 'block';
-    statusDiv.style.background = '#f0f8ff';
-    statusDiv.style.color = '#1b4d3e';
-    statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending OTP to your email...';
-
-    fetch('', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'action=send_delete_otp&table=' + encodeURIComponent(table) + '&item_id=' + itemId + '&item_name=' + encodeURIComponent(itemName)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            statusDiv.style.background = '#d4edda';
-            statusDiv.style.color = '#155724';
-            statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
-            startOTPTimer();
-        } else {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
-            statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
-        }
-    })
-    .catch(error => {
-        statusDiv.style.background = '#f8d7da';
-        statusDiv.style.color = '#721c24';
-        statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Failed to send OTP. Please try again.';
-    });
-}
-
-function startOTPTimer() {
-    if (otpTimerInterval) {
-        clearInterval(otpTimerInterval);
-    }
-    otpCountdownSeconds = 300;
-    updateOTPTimerDisplay();
-
-    otpTimerInterval = setInterval(function() {
-        otpCountdownSeconds--;
-        updateOTPTimerDisplay();
-
-        if (otpCountdownSeconds <= 0) {
-            clearInterval(otpTimerInterval);
-            otpTimerInterval = null;
-            const statusDiv = document.getElementById('otpStatus');
-            statusDiv.style.display = 'block';
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
-            statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> OTP has expired. Please click "Resend OTP" to get a new code.';
-            document.getElementById('otpCodeInput').disabled = true;
-        }
-    }, 1000);
-}
-
-function updateOTPTimerDisplay() {
-    const minutes = Math.floor(otpCountdownSeconds / 60);
-    const seconds = otpCountdownSeconds % 60;
-    document.getElementById('otpCountdown').textContent =
-        String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
-
-    if (otpCountdownSeconds < 60) {
-        document.getElementById('otpCountdown').style.color = '#e74c3c';
-    } else {
-        document.getElementById('otpCountdown').style.color = '#27ae60';
-    }
-}
-
-function verifyOTP() {
-    const otpCode = document.getElementById('otpCodeInput').value.trim();
-    if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
-        const statusDiv = document.getElementById('otpStatus');
-        statusDiv.style.display = 'block';
-        statusDiv.style.background = '#f8d7da';
-        statusDiv.style.color = '#721c24';
-        statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Please enter a valid 6-digit OTP code.';
-        return;
-    }
-
-    const statusDiv = document.getElementById('otpStatus');
-    statusDiv.style.display = 'block';
-    statusDiv.style.background = '#f0f8ff';
-    statusDiv.style.color = '#1b4d3e';
-    statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying OTP...';
-
-    const formData = new FormData();
-    formData.append('action', 'verify_delete_otp');
-    formData.append('otp_code', otpCode);
-    formData.append('table', currentDeleteData.table);
-    formData.append('item_id', currentDeleteData.item_id);
-
-    fetch('', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            statusDiv.style.background = '#d4edda';
-            statusDiv.style.color = '#155724';
-            statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message + ' Refreshing page...';
-
-            if (otpTimerInterval) {
-                clearInterval(otpTimerInterval);
-                otpTimerInterval = null;
-            }
-
-            setTimeout(function() {
-                window.location.reload();
-            }, 1500);
-        } else {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
-            statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
-        }
-    })
-    .catch(error => {
-        statusDiv.style.background = '#f8d7da';
-        statusDiv.style.color = '#721c24';
-        statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Verification failed. Please try again.';
-    });
-}
-
-function resendOTP() {
-    const statusDiv = document.getElementById('otpStatus');
-    statusDiv.style.display = 'block';
-    statusDiv.style.background = '#f0f8ff';
-    statusDiv.style.color = '#1b4d3e';
-    statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending new OTP...';
-
-    document.getElementById('otpCodeInput').disabled = false;
-    document.getElementById('otpCodeInput').value = '';
-
-    fetch('', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'action=resend_delete_otp&table=' + encodeURIComponent(currentDeleteData.table) + '&item_id=' + currentDeleteData.item_id + '&item_name=' + encodeURIComponent(currentDeleteData.item_name)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            statusDiv.style.background = '#d4edda';
-            statusDiv.style.color = '#155724';
-            statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
-            startOTPTimer();
-        } else {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
-            statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
-        }
-    })
-    .catch(error => {
-        statusDiv.style.background = '#f8d7da';
-        statusDiv.style.color = '#721c24';
-        statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Failed to resend OTP. Please try again.';
-    });
-}
 </script>
 </body>
 </html>

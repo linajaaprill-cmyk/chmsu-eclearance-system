@@ -34,14 +34,19 @@ if (isset($_GET['restore']) && isset($_GET['id'])) {
     $success = "Student restored from archive!";
 }
 
-if (isset($_GET['delete']) && isset($_GET['id'])) {
-    $student_id = sanitize($_GET['id']);
-    $check = $conn->query("SELECT * FROM chmsu_user_accounts WHERE chmsu_student_id='$student_id'");
-    if ($check->num_rows > 0) {
-        $error = "Cannot delete student with active account. Delete account first.";
-    } else {
-        $conn->query("DELETE FROM chmsu_students_master WHERE chmsu_student_id='$student_id'");
-        $success = "Student permanently deleted!";
+// ============================================
+// BULK RESTORE (NEW)
+// ============================================
+if (isset($_POST['bulk_restore']) && isset($_POST['selected_students'])) {
+    $selected = $_POST['selected_students'];
+    $restored = 0;
+    foreach ($selected as $student_id) {
+        $student_id = sanitize($student_id);
+        $conn->query("UPDATE chmsu_students_master SET is_archived = 0, archived_at = NULL, graduation_date = NULL WHERE chmsu_student_id='$student_id'");
+        $restored++;
+    }
+    if ($restored > 0) {
+        $success = "$restored student(s) restored from archive!";
     }
 }
 
@@ -183,6 +188,24 @@ $total_count = $graduates->num_rows;
         .plain-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         .plain-table th, .plain-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         .plain-table th { background: #f8f9fa; }
+        .plain-table input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+        
+        .bulk-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .bulk-actions label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            cursor: pointer;
+        }
         
         .badge-graduated { background: #27ae60; color: white; padding: 3px 8px; border-radius: 3px; font-size: 10px; display: inline-block; }
         
@@ -196,6 +219,7 @@ $total_count = $graduates->num_rows;
         body.dark-mode .plain-table th { background: #2c2c2c; color: #fff; border-color: #444; }
         body.dark-mode .plain-table td { border-color: #333; color: #fff; }
         body.dark-mode select, body.dark-mode input { background: #2c2c2c; border-color: #444; color: #fff; }
+        body.dark-mode .bulk-actions { background: #2c2c2c; }
         
         @media (max-width: 768px) {
             .registrar-sidebar { width: 100%; position: relative; height: auto; }
@@ -300,32 +324,63 @@ $total_count = $graduates->num_rows;
         <div class="content-card">
             <div class="content-card-header">Graduates (<?php echo $total_count; ?>)</div>
             <div class="content-card-body">
-                <div class="table-responsive">
-                    <table class="plain-table">
-                        <thead>
-                            <tr><th>ID</th><th>Last Name</th><th>First Name</th><th>Course</th><th>Year</th><th>Section</th><th>Actions</th></tr>
-                        </thead>
-                        <tbody>
-                            <?php if($graduates && $graduates->num_rows > 0): ?>
-                                <?php while($student = $graduates->fetch_assoc()): ?>
-                                <tr>
-                                    <td><?php echo $student['chmsu_student_id']; ?></a></td>
-                                    <td><?php echo htmlspecialchars($student['chmsu_last_name']); ?></a></td>
-                                    <td><?php echo htmlspecialchars($student['chmsu_first_name']); ?></a></td>
-                                    <td><?php echo $student['chmsu_course']; ?></a></td>
-                                    <td><?php echo $student['chmsu_year']; ?>th</a></td>
-                                    <td><?php echo htmlspecialchars($student['chmsu_section']); ?></a></td>
-                                    <td>
-                                        <a href="?section=archived&view_year=<?php echo $view_year; ?>&restore=1&id=<?php echo $student['chmsu_student_id']; ?>&filter_course=<?php echo urlencode($filter_course); ?>&filter_year=<?php echo $filter_year; ?>&filter_section=<?php echo urlencode($filter_section); ?>" class="btn btn-primary btn-sm" onclick="return confirm('Restore this student?')">Restore</a>
-                                        <a href="?section=archived&view_year=<?php echo $view_year; ?>&delete=1&id=<?php echo $student['chmsu_student_id']; ?>&filter_course=<?php echo urlencode($filter_course); ?>&filter_year=<?php echo $filter_year; ?>&filter_section=<?php echo urlencode($filter_section); ?>" class="btn btn-danger btn-sm" onclick="return confirm('Permanently delete this student?')">Delete</a>
-                                    </a>
-                                </tr>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <tr><td colspan="7" style="text-align:center;">No graduates found.</a></td><?php endif; ?>
-                        </tbody>
+                <form method="POST" id="bulkRestoreForm" onsubmit="return confirmBulkRestore()">
+                    <div class="bulk-actions">
+                        <label>
+                            <input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll()">
+                            <strong>Select All</strong>
+                        </label>
+                        <button type="submit" name="bulk_restore" class="btn btn-primary btn-sm">
+                            <i class="fas fa-undo"></i> Restore Selected
+                        </button>
+                        <span style="font-size: 11px; color: #666;">
+                            <span id="selectedCount">0</span> selected
+                        </span>
                     </div>
-                </div>
+                    
+                    <div class="table-responsive">
+                        <table class="plain-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 30px;">
+                                        <input type="checkbox" id="selectAllHeader" onclick="toggleSelectAllFromHeader()">
+                                    </th>
+                                    <th>ID</th>
+                                    <th>Last Name</th>
+                                    <th>First Name</th>
+                                    <th>Course</th>
+                                    <th>Year</th>
+                                    <th>Section</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if($graduates && $graduates->num_rows > 0): ?>
+                                    <?php while($student = $graduates->fetch_assoc()): ?>
+                                    <tr>
+                                        <td>
+                                            <input type="checkbox" name="selected_students[]" value="<?php echo $student['chmsu_student_id']; ?>" class="student-checkbox" onchange="updateSelectedCount()">
+                                        </td>
+                                        <td><?php echo $student['chmsu_student_id']; ?></td>
+                                        <td><?php echo htmlspecialchars($student['chmsu_last_name']); ?></td>
+                                        <td><?php echo htmlspecialchars($student['chmsu_first_name']); ?></td>
+                                        <td><?php echo $student['chmsu_course']; ?></td>
+                                        <td><?php echo $student['chmsu_year']; ?>th</td>
+                                        <td><?php echo htmlspecialchars($student['chmsu_section']); ?></td>
+                                        <td>
+                                            <a href="?section=archived&view_year=<?php echo $view_year; ?>&restore=1&id=<?php echo $student['chmsu_student_id']; ?>&filter_course=<?php echo urlencode($filter_course); ?>&filter_year=<?php echo $filter_year; ?>&filter_section=<?php echo urlencode($filter_section); ?>" class="btn btn-primary btn-sm" onclick="return confirm('Restore this student?')">Restore</a>
+                                        </td>
+                                    </tr>
+                                    <?php endwhile; ?>
+                                <?php else: ?>
+                                    <tr>
+                                        <td colspan="8" style="text-align:center;">No graduates found.</td>
+                                    </tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
@@ -338,6 +393,49 @@ function toggleDarkMode() {
 }
 if (localStorage.getItem('darkMode') === 'true') document.body.classList.add('dark-mode');
 function confirmLogout() { if(confirm('Logout?')) window.location.href = '?logout=1'; }
+
+// ============================================
+// SELECT ALL / BULK RESTORE (NEW)
+// ============================================
+function toggleSelectAll() {
+    const selectAll = document.getElementById('selectAllCheckbox');
+    const checkboxes = document.querySelectorAll('.student-checkbox');
+    checkboxes.forEach(cb => { cb.checked = selectAll.checked; });
+    document.getElementById('selectAllHeader').checked = selectAll.checked;
+    updateSelectedCount();
+}
+
+function toggleSelectAllFromHeader() {
+    const headerCheckbox = document.getElementById('selectAllHeader');
+    const checkboxes = document.querySelectorAll('.student-checkbox');
+    checkboxes.forEach(cb => { cb.checked = headerCheckbox.checked; });
+    document.getElementById('selectAllCheckbox').checked = headerCheckbox.checked;
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('.student-checkbox');
+    const checked = document.querySelectorAll('.student-checkbox:checked');
+    document.getElementById('selectedCount').textContent = checked.length;
+
+    const allChecked = checkboxes.length > 0 && checkboxes.length === checked.length;
+    document.getElementById('selectAllCheckbox').checked = allChecked;
+    document.getElementById('selectAllHeader').checked = allChecked;
+}
+
+function confirmBulkRestore() {
+    const selected = document.querySelectorAll('.student-checkbox:checked');
+    if (selected.length === 0) {
+        alert('Please select at least one student to restore.');
+        return false;
+    }
+    return confirm('Restore ' + selected.length + ' selected student(s) from archive?');
+}
+
+// Init count on load
+document.addEventListener('DOMContentLoaded', function() {
+    updateSelectedCount();
+});
 </script>
 </body>
 </html>

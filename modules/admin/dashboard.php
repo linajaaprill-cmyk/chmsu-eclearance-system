@@ -77,18 +77,11 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
     <title>CHMSU E-Clearance System - Admin Dashboard</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Times New Roman', Times, serif;
-            background: #f5f5f5;
-            font-size: 14px;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Times New Roman', Times, serif; background: #f5f5f5; font-size: 14px; }
 
         .header {
             background: #1b4d3e;
@@ -101,52 +94,31 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             top: 0;
             z-index: 1000;
         }
-
-        .header-logo img {
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            object-fit: cover;
-        }
-
-        .header-title h1 {
-            font-size: 20px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-        }
-
-        .header-title p {
-            font-size: 11px;
-            opacity: 0.8;
-            margin-top: 3px;
-        }
-
+        .header-logo img { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
+        .header-title h1 { font-size: 20px; font-weight: normal; }
+        .header-title p { font-size: 11px; opacity: 0.8; margin-top: 3px; }
         .dark-mode-toggle {
             background: transparent;
             border: 1px solid rgba(255,255,255,0.3);
             color: white;
             padding: 6px 12px;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
             margin-left: auto;
-            border-radius: 0;
         }
-
         .logout-btn {
             background: #e74c3c;
             color: white;
             padding: 6px 15px;
             border: none;
             cursor: pointer;
-            font-family: 'Times New Roman', Times, serif;
-            border-radius: 0;
+            text-decoration: none;
         }
 
-        .dashboard-wrapper {
-            display: flex;
-            min-height: calc(100vh - 73px);
-        }
+        .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
 
+        /* ============================================ */
+        /* SIDEBAR - NOW IDENTICAL TO COURSES SIDEBAR   */
+        /* ============================================ */
         .admin-sidebar {
             width: 260px;
             background: #1b4d3e;
@@ -156,68 +128,25 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             overflow-y: auto;
             overflow-x: hidden;
         }
-
-        .admin-sidebar::-webkit-scrollbar {
-            width: 5px;
-        }
-
-        .admin-sidebar::-webkit-scrollbar-track {
-            background: #2d6a4f;
-        }
-
-        .admin-sidebar::-webkit-scrollbar-thumb {
-            background: #f1c40f;
-            border-radius: 5px;
-        }
-
-        .admin-sidebar .sidebar-header {
-            padding: 20px;
-            border-bottom: 1px solid #2d6a4f;
-        }
-
-        .admin-sidebar .sidebar-header h3 {
-            font-size: 16px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-        }
-
-        .admin-sidebar .sidebar-header p {
-            font-size: 11px;
-            opacity: 0.7;
-            margin-top: 5px;
-        }
-
-        .admin-sidebar .sidebar-menu {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-            padding-bottom: 20px;
-        }
-
-        .admin-sidebar .sidebar-menu li {
-            border-bottom: 1px solid #2d6a4f;
-        }
-
-        .admin-sidebar .sidebar-menu li.dropdown {
-            border-bottom: none;
-        }
-
+        .admin-sidebar::-webkit-scrollbar { width: 5px; }
+        .admin-sidebar::-webkit-scrollbar-track { background: #2d6a4f; }
+        .admin-sidebar::-webkit-scrollbar-thumb { background: #f1c40f; border-radius: 5px; }
+        .admin-sidebar .sidebar-header { padding: 20px; border-bottom: 1px solid #2d6a4f; }
+        .admin-sidebar .sidebar-header h3 { font-size: 16px; font-weight: normal; }
+        .admin-sidebar .sidebar-header p { font-size: 11px; opacity: 0.7; margin-top: 5px; }
+        .admin-sidebar .sidebar-menu { list-style: none; padding: 0; margin: 0; padding-bottom: 20px; }
+        .admin-sidebar .sidebar-menu li { border-bottom: 1px solid #2d6a4f; }
+        .admin-sidebar .sidebar-menu li.dropdown { border-bottom: none; }
         .admin-sidebar .sidebar-menu a {
             display: block;
             padding: 12px 20px;
             color: white;
             text-decoration: none;
             font-size: 13px;
-            font-family: 'Times New Roman', Times, serif;
             transition: all 0.3s;
         }
-
         .admin-sidebar .sidebar-menu a:hover,
-        .admin-sidebar .sidebar-menu a.active {
-            background: #f1c40f;
-            color: #000000;
-        }
-
+        .admin-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
         .admin-sidebar .sidebar-menu .dropdown-menu {
             list-style: none;
             padding: 0;
@@ -225,25 +154,11 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             background: #0f3b2f;
             display: block;
         }
-
-        .admin-sidebar .sidebar-menu .dropdown-menu li {
-            border-bottom: 1px solid #2d6a4f;
-        }
-
-        .admin-sidebar .sidebar-menu .dropdown-menu a {
-            padding: 10px 20px 10px 35px;
-            font-size: 12px;
-        }
-
+        .admin-sidebar .sidebar-menu .dropdown-menu li { border-bottom: 1px solid #2d6a4f; }
+        .admin-sidebar .sidebar-menu .dropdown-menu a { padding: 10px 20px 10px 35px; font-size: 12px; }
         .admin-sidebar .sidebar-menu .dropdown-menu a:hover,
-        .admin-sidebar .sidebar-menu .dropdown-menu a.active {
-            background: #f1c40f;
-            color: #000000;
-        }
-
-        .dropdown-toggle::after {
-            display: none;
-        }
+        .admin-sidebar .sidebar-menu .dropdown-menu a.active { background: #f1c40f; color: #000000; }
+        .dropdown-toggle::after { display: none; }
 
         .main-content {
             flex: 1;
@@ -252,174 +167,168 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             background: #f5f5f5;
             min-height: calc(100vh - 73px);
         }
-
         .dashboard-header-bar {
             background: white;
-            padding: 12px 20px;
+            padding: 15px 20px;
             border: 1px solid #ddd;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .dashboard-header-bar h2 {
-            font-size: 18px;
-            font-weight: normal;
-            font-family: 'Times New Roman', Times, serif;
-            color: #1b4d3e;
-        }
-
-        .stats-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 1px;
-            background: #ddd;
             margin-bottom: 20px;
-            border: 1px solid #ddd;
+        }
+        .dashboard-header-bar h2 { font-size: 18px; font-weight: normal; color: #1b4d3e; }
+
+        /* STATS CARDS */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
         }
         .stat-card {
-            flex: 1;
             background: white;
-            padding: 8px 5px;
-            text-align: center;
-            min-width: 100px;
+            padding: 16px 14px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            transition: transform 0.15s, box-shadow 0.15s;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        }
+        .stat-card .stat-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 4px;
         }
         .stat-card .number {
-            font-size: 20px;
-            font-weight: bold;
+            font-size: 24px;
+            font-weight: 700;
             color: #1b4d3e;
-            line-height: 1.2;
+            line-height: 1.1;
         }
         .stat-card .label {
             font-size: 10px;
-            color: #666;
-            margin-top: 2px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            font-weight: 600;
         }
 
-        .stats-row {
+        /* CURRENT SY / SEM BAR */
+        .current-setup-bar {
             display: flex;
-            flex-wrap: wrap;
-            gap: 1px;
-            background: #ddd;
+            gap: 12px;
             margin-bottom: 20px;
-            border: 1px solid #ddd;
         }
-        .stats-row .stat-card {
+        .current-setup-item {
             flex: 1;
             background: white;
-            padding: 6px 5px;
-            text-align: center;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px 18px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+        .current-setup-item .setup-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: #f0fdf4;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #1b4d3e;
+            flex-shrink: 0;
+        }
+        .current-setup-item .setup-label {
+            font-size: 10px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            font-weight: 600;
+        }
+        .current-setup-item .setup-value {
+            font-size: 15px;
+            font-weight: 600;
+            color: #1b4d3e;
         }
 
+        /* CHARTS - 2 charts */
         .charts-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 15px;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
             margin-bottom: 20px;
         }
         .chart-card {
             background: white;
-            border: 1px solid #ddd;
-            padding: 10px;
+            border: 1px solid #e2e8f0;
+            padding: 18px;
+            border-radius: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         }
         .chart-card-header {
-            font-size: 12px;
-            font-weight: bold;
+            font-size: 13px;
+            font-weight: 600;
             color: #1b4d3e;
-            margin-bottom: 10px;
-            padding-bottom: 5px;
-            border-bottom: 1px solid #eee;
+            margin-bottom: 14px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #f1f5f9;
             text-align: center;
+            letter-spacing: 0.3px;
         }
-        canvas { max-height: 150px; width: 100%; }
+        canvas { max-height: 200px; width: 100%; }
 
         .merged-legend {
             display: flex;
             justify-content: center;
-            gap: 15px;
-            margin-top: 8px;
-            font-size: 10px;
+            gap: 18px;
+            margin-top: 12px;
+            font-size: 11px;
             flex-wrap: wrap;
         }
         .legend-item {
             display: inline-flex;
             align-items: center;
-            gap: 4px;
+            gap: 6px;
+            color: #475569;
         }
         .legend-color {
             width: 10px;
             height: 10px;
-            border-radius: 2px;
+            border-radius: 3px;
         }
 
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 10px;
-            margin-bottom: 15px;
-            border-left: 3px solid #e74c3c;
-        }
+        .error { background: #f8d7da; color: #721c24; padding: 10px; margin-bottom: 15px; border-left: 3px solid #e74c3c; }
+        .success { background: #d4edda; color: #155724; padding: 10px; margin-bottom: 15px; border-left: 3px solid #27ae60; }
 
-        .success {
-            background: #d4edda;
-            color: #155724;
-            padding: 10px;
-            margin-bottom: 15px;
-            border-left: 3px solid #27ae60;
-        }
-
-        body.dark-mode {
-            background: #0a0a0a;
-        }
-
-        body.dark-mode .main-content {
-            background: #0a0a0a;
-        }
-
-        body.dark-mode .dashboard-header-bar,
-        body.dark-mode .stat-card,
-        body.dark-mode .chart-card {
-            background: #1a1a1a;
-            border-color: #333;
-            color: #fff;
-        }
-
-        body.dark-mode .dashboard-header-bar h2 {
-            color: #f1c40f;
-        }
-
-        body.dark-mode .stat-card .number {
-            color: #f1c40f;
-        }
-
-        body.dark-mode .stat-card .label {
-            color: #ccc;
-        }
-
-        body.dark-mode .admin-sidebar::-webkit-scrollbar-track {
-            background: #0f3b2f;
-        }
-
-        /* ============================================ */
-        /* EMAIL CONNECTION UI */
-        /* ============================================ */
+        /* EMAIL CONNECTION CARD */
         .email-connection-card {
             background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
             overflow: hidden;
-            margin-bottom: 15px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-            transition: all 0.3s ease;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            transition: box-shadow 0.2s;
         }
-        .email-connection-card:hover {
-            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-        }
+        .email-connection-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
         .email-connection-header {
             padding: 14px 20px;
-            background: #f8f9fa;
-            border-bottom: 1px solid #e0e0e0;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -434,9 +343,6 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             align-items: center;
             gap: 8px;
         }
-        .email-connection-title i {
-            color: #1b4d3e;
-        }
         .status-badge {
             padding: 4px 14px;
             border-radius: 20px;
@@ -446,26 +352,10 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             align-items: center;
             gap: 6px;
         }
-        .status-connected {
-            background: #e8f5e9;
-            color: #2e7d32;
-        }
-        .status-disconnected {
-            background: #fce4ec;
-            color: #c62828;
-        }
-        .email-connection-body {
-            padding: 16px 20px;
-        }
-        .email-connected-info {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
-        .email-avatar {
-            flex-shrink: 0;
-        }
+        .status-connected { background: #dcfce7; color: #166534; }
+        .status-disconnected { background: #fee2e2; color: #991b1b; }
+        .email-connection-body { padding: 16px 20px; }
+        .email-connected-info { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
         .avatar-circle {
             width: 44px;
             height: 44px;
@@ -477,18 +367,11 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             font-weight: 600;
             color: white;
         }
-        .email-details {
-            flex: 1;
-            min-width: 150px;
-        }
-        .email-address {
-            font-size: 15px;
-            font-weight: 500;
-            color: #333;
-        }
+        .email-details { flex: 1; min-width: 150px; }
+        .email-address { font-size: 15px; font-weight: 500; color: #1e293b; }
         .email-status {
             font-size: 12px;
-            color: #666;
+            color: #64748b;
             display: flex;
             align-items: center;
             gap: 6px;
@@ -498,35 +381,27 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background: #4caf50;
+            background: #4ade80;
             display: inline-block;
             animation: pulse-green 2s infinite;
         }
         @keyframes pulse-green {
-            0% { opacity: 1; }
-            50% { opacity: 0.4; }
-            100% { opacity: 1; }
+            0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; }
         }
-        .email-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-left: auto;
-        }
+        .email-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
         .btn-email-change {
-            padding: 5px 14px;
+            padding: 6px 16px;
             background: #1b4d3e;
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 11px;
-            transition: background 0.3s;
-            font-family: 'Times New Roman', Times, serif;
+            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }
-        .btn-email-change:hover {
-            background: #2d6a4f;
-        }
+        .btn-email-change:hover { background: #2d6a4f; }
         .email-disconnected {
             display: flex;
             flex-direction: column;
@@ -538,7 +413,7 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         .email-disconnected-icon {
             width: 64px;
             height: 64px;
-            background: #f0f4f3;
+            background: #f1f5f9;
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -546,91 +421,56 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             font-size: 28px;
             color: #1b4d3e;
         }
-        .email-disconnected-text h4 {
-            font-size: 16px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 4px;
-            font-family: 'Times New Roman', Times, serif;
-        }
-        .email-disconnected-text p {
-            font-size: 13px;
-            color: #666;
-            margin: 0;
-        }
+        .email-disconnected-text h4 { font-size: 16px; font-weight: 600; color: #1e293b; margin-bottom: 4px; }
+        .email-disconnected-text p { font-size: 13px; color: #64748b; margin: 0; }
         .btn-connect-gmail {
             padding: 10px 28px;
             background: #4285F4;
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 8px;
             cursor: pointer;
             font-size: 14px;
             font-weight: 500;
             display: inline-flex;
             align-items: center;
             gap: 12px;
-            transition: all 0.3s;
-            font-family: 'Times New Roman', Times, serif;
-            box-shadow: 0 2px 8px rgba(66, 133, 244, 0.3);
         }
-        .btn-connect-gmail:hover {
-            background: #3367D6;
-            transform: scale(1.02);
-            box-shadow: 0 4px 12px rgba(66, 133, 244, 0.4);
-        }
-        .btn-connect-gmail i {
-            font-size: 18px;
-        }
+        .btn-connect-gmail:hover { background: #3367D6; }
 
-        /* ============================================ */
-        /* EMAIL MODAL - COMPACT, ONLY SIGN IN BUTTON */
-        /* ============================================ */
+        /* EMAIL MODAL */
         .email-modal-overlay {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.5);
             z-index: 99999;
             justify-content: center;
             align-items: center;
             backdrop-filter: blur(4px);
         }
-        .email-modal-overlay.active {
-            display: flex;
-        }
+        .email-modal-overlay.active { display: flex; }
         .email-modal {
             background: #ffffff;
             max-width: 380px;
             width: 92%;
-            border-radius: 12px;
+            border-radius: 16px;
             overflow: hidden;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            animation: modalSlideUp 0.3s ease;
         }
-        @keyframes modalSlideUp {
-            from { opacity: 0; transform: translateY(20px) scale(0.95); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-
         .email-modal-header {
             padding: 16px 22px 10px 22px;
             background: #ffffff;
-            color: #202124;
             display: flex;
             justify-content: center;
             align-items: center;
-            border-bottom: none;
             position: relative;
         }
         .email-modal-header h3 {
             font-size: 17px;
-            font-weight: 500;
-            font-family: 'Times New Roman', Times, serif;
-            color: #202124;
+            font-weight: 600;
+            color: #1e293b;
         }
         .email-modal-close {
             position: absolute;
@@ -638,16 +478,12 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             top: 12px;
             background: none;
             border: none;
-            color: #5f6368;
+            color: #64748b;
             font-size: 24px;
             cursor: pointer;
             opacity: 0.6;
-            transition: opacity 0.3s;
-            padding: 4px 8px;
         }
-        .email-modal-close:hover {
-            opacity: 1;
-        }
+        .email-modal-close:hover { opacity: 1; }
         .email-modal-body {
             padding: 4px 24px 22px 24px;
             text-align: center;
@@ -655,12 +491,10 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         }
         .email-modal-subtitle {
             font-size: 13px;
-            color: #5f6368;
+            color: #64748b;
             margin-bottom: 18px;
             line-height: 1.5;
-            font-family: 'Times New Roman', Times, serif;
         }
-
         .btn-google-signin {
             width: 100%;
             padding: 12px 18px;
@@ -675,165 +509,77 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             align-items: center;
             justify-content: center;
             gap: 12px;
-            transition: all 0.2s;
-            font-family: 'Times New Roman', Times, serif;
-            box-shadow: none;
         }
-        .btn-google-signin:hover {
-            background: #f8f9fa;
-            border-color: #c6c8ca;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-            transform: none;
-        }
-        .btn-google-signin:active {
-            background: #f1f3f4;
-        }
-        .btn-google-signin svg {
-            width: 20px;
-            height: 20px;
-            flex-shrink: 0;
-        }
-        .btn-google-signin .btn-text {
-            color: #3c4043;
-            font-family: 'Times New Roman', Times, serif;
-        }
-
+        .btn-google-signin:hover { background: #f8f9fa; border-color: #c6c8ca; }
+        .btn-google-signin svg { width: 20px; height: 20px; }
         .email-modal-footer {
             margin-top: 14px;
             padding-top: 12px;
-            border-top: 1px solid #f1f3f4;
+            border-top: 1px solid #f1f5f9;
             display: flex;
             justify-content: center;
-            gap: 12px;
         }
         .btn-cancel-modal {
             padding: 8px 24px;
-            background: #f8f9fa;
+            background: #f8fafc;
             color: #3c4043;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
             font-size: 13px;
-            font-family: 'Times New Roman', Times, serif;
-            transition: background 0.2s;
             font-weight: 500;
         }
-        .btn-cancel-modal:hover {
-            background: #f1f3f4;
-        }
+        .btn-cancel-modal:hover { background: #f1f5f9; }
 
-        body.dark-mode .email-modal {
-            background: #202124;
-        }
-        body.dark-mode .email-modal-header {
-            background: #202124;
-        }
-        body.dark-mode .email-modal-header h3 {
-            color: #e8eaed;
-        }
-        body.dark-mode .email-modal-close {
-            color: #9aa0a6;
-        }
-        body.dark-mode .email-modal-body {
-            background: #202124;
-        }
-        body.dark-mode .email-modal-subtitle {
-            color: #9aa0a6;
-        }
-        body.dark-mode .btn-google-signin {
-            background: #2d2e30;
-            border-color: #3c4043;
-            color: #e8eaed;
-        }
-        body.dark-mode .btn-google-signin:hover {
-            background: #3c4043;
-            border-color: #5f6368;
-        }
-        body.dark-mode .btn-google-signin .btn-text {
-            color: #e8eaed;
-        }
-        body.dark-mode .btn-cancel-modal {
-            background: #2d2e30;
-            color: #e8eaed;
-        }
-        body.dark-mode .btn-cancel-modal:hover {
-            background: #3c4043;
-        }
-        body.dark-mode .email-modal-footer {
-            border-top-color: #3c4043;
-        }
-        body.dark-mode .email-connection-card {
-            background: #1a1a1a;
-            border-color: #333;
-        }
-        body.dark-mode .email-connection-header {
-            background: #2c2c2c;
-            border-color: #333;
-        }
-        body.dark-mode .email-connection-title {
-            color: #f1c40f;
-        }
-        body.dark-mode .email-address {
-            color: #fff;
-        }
-        body.dark-mode .email-status {
-            color: #ccc;
-        }
-        body.dark-mode .email-disconnected-icon {
-            background: #2c2c2c;
-            color: #f1c40f;
-        }
-        body.dark-mode .email-disconnected-text h4 {
-            color: #fff;
-        }
-        body.dark-mode .email-disconnected-text p {
-            color: #ccc;
-        }
+        /* DARK MODE */
+        body.dark-mode { background: #0f172a; color: #e2e8f0; }
+        body.dark-mode .main-content { background: #0f172a; }
+        body.dark-mode .dashboard-header-bar,
+        body.dark-mode .stat-card,
+        body.dark-mode .chart-card,
+        body.dark-mode .current-setup-item,
+        body.dark-mode .email-connection-card { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+        body.dark-mode .dashboard-header-bar h2 { color: #facc15; }
+        body.dark-mode .stat-card .number { color: #facc15; }
+        body.dark-mode .stat-card .label { color: #94a3b8; }
+        body.dark-mode .current-setup-item .setup-icon { background: #334155; color: #facc15; }
+        body.dark-mode .current-setup-item .setup-value { color: #facc15; }
+        body.dark-mode .current-setup-item .setup-label { color: #94a3b8; }
+        body.dark-mode .chart-card-header { color: #facc15; border-bottom-color: #334155; }
+        body.dark-mode .legend-item { color: #94a3b8; }
+        body.dark-mode .email-connection-header { background: #1e293b; border-color: #334155; }
+        body.dark-mode .email-connection-title { color: #facc15; }
+        body.dark-mode .email-address { color: #e2e8f0; }
+        body.dark-mode .email-status { color: #94a3b8; }
+        body.dark-mode .email-disconnected-icon { background: #334155; color: #facc15; }
+        body.dark-mode .email-disconnected-text h4 { color: #e2e8f0; }
+        body.dark-mode .email-disconnected-text p { color: #94a3b8; }
+        body.dark-mode .email-modal { background: #1e293b; }
+        body.dark-mode .email-modal-header { background: #1e293b; }
+        body.dark-mode .email-modal-header h3 { color: #e2e8f0; }
+        body.dark-mode .email-modal-close { color: #94a3b8; }
+        body.dark-mode .email-modal-body { background: #1e293b; }
+        body.dark-mode .email-modal-subtitle { color: #94a3b8; }
+        body.dark-mode .btn-google-signin { background: #2d2e30; border-color: #3c4043; color: #e8eaed; }
+        body.dark-mode .btn-cancel-modal { background: #2d2e30; color: #e8eaed; }
 
-        @media (max-width: 600px) {
-            .email-connected-info {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-            .email-actions {
-                margin-left: 0;
-                width: 100%;
-            }
-            .email-actions form,
-            .email-actions button {
-                width: 100%;
-                justify-content: center;
-            }
-            .btn-connect-gmail {
-                width: 100%;
-                justify-content: center;
-            }
+        @media (max-width: 1024px) {
+            .stats-grid { grid-template-columns: repeat(4, 1fr); }
         }
-
         @media (max-width: 768px) {
-            .admin-sidebar {
-                width: 100%;
-                position: relative;
-                height: auto;
-            }
-            .main-content {
-                margin-left: 0;
-            }
-            .stats-container {
-                flex-wrap: wrap;
-            }
-            .stats-row {
-                flex-wrap: wrap;
-            }
-            .charts-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
+            .admin-sidebar { width: 100%; position: relative; height: auto; }
+            .main-content { margin-left: 0; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .charts-grid { grid-template-columns: 1fr; }
+            .current-setup-bar { flex-direction: column; }
         }
-
         @media (max-width: 480px) {
-            .charts-grid {
-                grid-template-columns: 1fr;
-            }
+            .stats-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 600px) {
+            .email-connected-info { flex-direction: column; align-items: flex-start; }
+            .email-actions { margin-left: 0; width: 100%; }
+            .btn-connect-gmail { width: 100%; justify-content: center; }
         }
     </style>
 </head>
@@ -848,10 +594,11 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         <p>CLEARANCE SYSTEM | Admin Portal</p>
     </div>
     <button class="dark-mode-toggle" onclick="toggleDarkMode()">Dark Mode</button>
-    <button onclick="confirmLogout()" class="logout-btn">Logout</button>
+    <a href="?logout=1" class="logout-btn" onclick="return confirm('Are you sure you want to logout?');">Logout</a>
 </div>
 
 <div class="dashboard-wrapper">
+    <!-- SIDEBAR - NOW IDENTICAL TO COURSES SIDEBAR -->
     <div class="admin-sidebar">
         <div class="sidebar-header">
             <h3>Admin: <?php echo htmlspecialchars($admin); ?></h3>
@@ -889,8 +636,12 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
                 <i class="fas fa-chart-bar"></i> Reports
             </a></li>
 
+            <li><a href="?adminsection=activity" class="<?php echo $adminSection == 'activity' ? 'active' : ''; ?>">
+                <i class="fas fa-history"></i> Activity Log
+            </a></li>
+
             <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
-                <a href="#" onclick="confirmLogout()">
+                <a href="?logout=1" onclick="return confirm('Are you sure you want to logout?');">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </li>
@@ -910,9 +661,7 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             <div class="success"><?php echo $success; ?></div>
         <?php endif; ?>
 
-        <!-- ============================================ -->
         <!-- EMAIL CONNECTION UI -->
-        <!-- ============================================ -->
         <div class="email-connection-card">
             <div class="email-connection-header">
                 <div class="email-connection-title">
@@ -968,7 +717,7 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
                         </div>
                         <div>
                             <button onclick="openEmailModal()" class="btn-connect-gmail">
-                                <i class="fab fa-google"></i> Connect Gmail
+                                <i class="fas fa-envelope"></i> Connect Gmail
                             </button>
                         </div>
                     </div>
@@ -976,94 +725,96 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             </div>
         </div>
 
-        <!-- ROW 1 STATS -->
-        <div class="stats-container">
+        <!-- 8 STAT CARDS -->
+        <div class="stats-grid">
             <div class="stat-card">
+                <div class="stat-icon" style="background:#eff6ff;color:#2563eb;">
+                    <i class="fas fa-users" style="font-size:16px;"></i>
+                </div>
                 <div class="number"><?php echo $totalStudents; ?></div>
                 <div class="label">Total Students</div>
             </div>
             <div class="stat-card">
+                <div class="stat-icon" style="background:#f0fdf4;color:#16a34a;">
+                    <i class="fas fa-building" style="font-size:16px;"></i>
+                </div>
                 <div class="number"><?php echo $totalOffices; ?></div>
-                <div class="label">Offices</div>
+                <div class="label">Total Offices</div>
             </div>
             <div class="stat-card">
-                <div class="number"><?php echo $totalCourses; ?></div>
-                <div class="label">Courses</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $totalSections; ?></div>
-                <div class="label">Sections</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $totalRequirements; ?></div>
-                <div class="label">Requirements</div>
-            </div>
-            <div class="stat-card">
+                <div class="stat-icon" style="background:#fef3c7;color:#d97706;">
+                    <i class="fas fa-file-alt" style="font-size:16px;"></i>
+                </div>
                 <div class="number"><?php echo $totalSubmissions; ?></div>
-                <div class="label">Submissions</div>
+                <div class="label">Total Submissions</div>
             </div>
             <div class="stat-card">
+                <div class="stat-icon" style="background:#fff7ed;color:#ea580c;">
+                    <i class="fas fa-clock" style="font-size:16px;"></i>
+                </div>
                 <div class="number"><?php echo $pendingSubmissions; ?></div>
-                <div class="label">Pending</div>
+                <div class="label">Pending Submissions</div>
             </div>
+
             <div class="stat-card">
+                <div class="stat-icon" style="background:#dcfce7;color:#16a34a;">
+                    <i class="fas fa-check-circle" style="font-size:16px;"></i>
+                </div>
                 <div class="number"><?php echo $approvedSubmissions; ?></div>
                 <div class="label">Approved</div>
             </div>
-        </div>
-
-        <!-- ROW 2 STATS -->
-        <div class="stats-row">
             <div class="stat-card">
+                <div class="stat-icon" style="background:#fee2e2;color:#dc2626;">
+                    <i class="fas fa-times-circle" style="font-size:16px;"></i>
+                </div>
                 <div class="number"><?php echo $declinedSubmissions; ?></div>
                 <div class="label">Declined</div>
             </div>
             <div class="stat-card">
-                <div class="number"><?php echo $totalAdminAccounts; ?></div>
-                <div class="label">Admin Accounts</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $totalOfficeAccounts; ?></div>
-                <div class="label">Office Accounts</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $totalSchoolYears; ?></div>
-                <div class="label">School Years</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $totalSemesters; ?></div>
-                <div class="label">Semesters</div>
-            </div>
-            <div class="stat-card">
+                <div class="stat-icon" style="background:#e0e7ff;color:#4f46e5;">
+                    <i class="fas fa-chart-line" style="font-size:16px;"></i>
+                </div>
                 <div class="number"><?php echo $activityLast7Days; ?></div>
-                <div class="label">Activities (7 days)</div>
+                <div class="label">Activity (7d)</div>
             </div>
             <div class="stat-card">
-                <div class="number"><?php echo $totalStudentsMaster; ?></div>
-                <div class="label">Masterlist</div>
-            </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $totalArchived; ?></div>
-                <div class="label">Archived</div>
+                <div class="stat-icon" style="background:#f3e8ff;color:#9333ea;">
+                    <i class="fas fa-shield-alt" style="font-size:16px;"></i>
+                </div>
+                <div class="number"><?php echo $totalAdminAccounts + $totalOfficeAccounts; ?></div>
+                <div class="label">Total Accounts</div>
             </div>
         </div>
 
-        <!-- CURRENT SETUP INFO -->
-        <div class="stats-row">
-            <div class="stat-card">
-                <div class="number"><?php echo $currentSchoolYear ? $currentSchoolYear['school_year'] : 'N/A'; ?></div>
-                <div class="label">Current School Year</div>
+        <!-- CURRENT SY / SEM BAR -->
+        <div class="current-setup-bar">
+            <div class="current-setup-item">
+                <div class="setup-icon">
+                    <i class="fas fa-calendar" style="font-size:16px;"></i>
+                </div>
+                <div>
+                    <div class="setup-label">Current School Year</div>
+                    <div class="setup-value"><?php echo $currentSchoolYear ? $currentSchoolYear['school_year'] : 'N/A'; ?></div>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="number"><?php echo $currentSemester ? $currentSemester['semester_name'] : 'N/A'; ?></div>
-                <div class="label">Current Semester</div>
+            <div class="current-setup-item">
+                <div class="setup-icon">
+                    <i class="fas fa-clock" style="font-size:16px;"></i>
+                </div>
+                <div>
+                    <div class="setup-label">Current Semester</div>
+                    <div class="setup-value"><?php echo $currentSemester ? $currentSemester['semester_name'] : 'N/A'; ?></div>
+                </div>
             </div>
         </div>
 
-        <!-- CHARTS SECTION -->
+        <!-- 2 CHARTS USING CHART.JS -->
         <div class="charts-grid">
             <div class="chart-card">
-                <div class="chart-card-header">Submission Status</div>
+                <div class="chart-card-header">
+                    <i class="fas fa-chart-pie" style="margin-right:6px;color:#1b4d3e;"></i>
+                    Submission Status
+                </div>
                 <canvas id="submissionStatusChart"></canvas>
                 <div class="merged-legend">
                     <span class="legend-item"><span class="legend-color" style="background: #f39c12;"></span> Pending <?php echo $pendingSubmissions; ?></span>
@@ -1073,32 +824,17 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             </div>
 
             <div class="chart-card">
-                <div class="chart-card-header">Requirements by Office</div>
-                <canvas id="officeRequirementsChart"></canvas>
-            </div>
-
-            <div class="chart-card">
-                <div class="chart-card-header">Submissions Trend (6 Months)</div>
+                <div class="chart-card-header">
+                    <i class="fas fa-chart-line" style="margin-right:6px;color:#1b4d3e;"></i>
+                    Submissions Trend (6 Months)
+                </div>
                 <canvas id="submissionsTrendChart"></canvas>
             </div>
-
-            <div class="chart-card">
-                <div class="chart-card-header">System Overview</div>
-                <canvas id="systemOverviewChart"></canvas>
-                <div class="merged-legend">
-                    <span class="legend-item"><span class="legend-color" style="background: #3498db;"></span> Courses <?php echo $totalCourses; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #e67e22;"></span> Offices <?php echo $totalOffices; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #9b59b6;"></span> Sections <?php echo $totalSections; ?></span>
-                </div>
-            </div>
         </div>
-
     </div>
 </div>
 
-<!-- ============================================ -->
-<!-- EMAIL MODAL - COMPACT, ONLY SIGN IN BUTTON -->
-<!-- ============================================ -->
+<!-- EMAIL MODAL -->
 <div class="email-modal-overlay" id="emailModal">
     <div class="email-modal">
         <div class="email-modal-header">
@@ -1111,13 +847,13 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             </p>
 
             <button onclick="window.location.href='?google_login=1'" class="btn-google-signin">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="20" height="20">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
                     <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"/>
                     <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"/>
                     <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"/>
                     <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"/>
                 </svg>
-                <span class="btn-text">Sign in with Google</span>
+                <span>Sign in with Google</span>
             </button>
 
             <div class="email-modal-footer">
@@ -1127,31 +863,29 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
     </div>
 </div>
 
-<!-- ============================================ -->
-<!-- OTP VERIFICATION MODAL FOR DELETE OPERATIONS -->
-<!-- ============================================ -->
-<div id="otpModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; justify-content:center; align-items:center; font-family:'Times New Roman', Times, serif;">
-    <div style="background:white; max-width:420px; width:90%; padding:30px; border-radius:6px; box-shadow:0 10px 40px rgba(0,0,0,0.3); position:relative;">
+<!-- OTP VERIFICATION MODAL -->
+<div id="otpModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; justify-content:center; align-items:center;">
+    <div style="background:white; max-width:420px; width:90%; padding:30px; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,0.3); position:relative;">
         <div style="position:absolute; top:10px; right:15px; cursor:pointer; font-size:20px; color:#999;" onclick="closeOTPModal()">&times;</div>
-        <h3 style="color:#1b4d3e; margin-bottom:8px; font-weight:normal;">
+        <h3 style="color:#1b4d3e; margin-bottom:8px; font-weight:600; display:flex; align-items:center; gap:8px;">
             <i class="fas fa-shield-alt" style="color:#f1c40f;"></i> Verify Delete Action
         </h3>
-        <p style="font-size:12px; color:#666; margin-bottom:15px;">
+        <p style="font-size:12px; color:#64748b; margin-bottom:15px;">
             An OTP has been sent to your configured email. Enter it below to confirm deletion.
         </p>
 
-        <div id="otpStatus" style="padding:8px; margin-bottom:12px; border-radius:4px; display:none;"></div>
+        <div id="otpStatus" style="padding:8px; margin-bottom:12px; border-radius:8px; display:none;"></div>
 
         <div style="margin-bottom:15px;">
-            <label style="display:block; font-size:12px; color:#333; margin-bottom:4px;">Item to Delete:</label>
-            <div style="background:#f5f5f5; padding:8px 12px; border-radius:4px; font-size:13px; font-weight:bold; color:#1b4d3e;" id="otpItemName">-</div>
+            <label style="display:block; font-size:12px; color:#1e293b; margin-bottom:4px;">Item to Delete:</label>
+            <div style="background:#f1f5f9; padding:8px 12px; border-radius:8px; font-size:13px; font-weight:600; color:#1b4d3e;" id="otpItemName">-</div>
         </div>
 
         <div style="margin-bottom:15px;">
-            <label style="display:block; font-size:12px; color:#333; margin-bottom:4px;">Enter OTP Code:</label>
+            <label style="display:block; font-size:12px; color:#1e293b; margin-bottom:4px;">Enter OTP Code:</label>
             <div style="display:flex; gap:8px;">
-                <input type="text" id="otpCodeInput" placeholder="Enter 6-digit OTP" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:4px; font-size:18px; letter-spacing:3px; text-align:center; font-family:'Courier New', monospace;" maxlength="6" autocomplete="off">
-                <button onclick="verifyOTP()" style="background:#1b4d3e; color:white; border:none; padding:10px 20px; border-radius:4px; cursor:pointer; font-family:'Times New Roman', Times, serif;">
+                <input type="text" id="otpCodeInput" placeholder="Enter 6-digit OTP" style="flex:1; padding:10px; border:1px solid #e2e8f0; border-radius:8px; font-size:18px; letter-spacing:3px; text-align:center; font-family:'Courier New', monospace;" maxlength="6" autocomplete="off">
+                <button onclick="verifyOTP()" style="background:#1b4d3e; color:white; border:none; padding:10px 20px; border-radius:8px; cursor:pointer; display:flex; align-items:center; gap:6px;">
                     <i class="fas fa-check"></i> Verify
                 </button>
             </div>
@@ -1161,13 +895,13 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             <span id="otpTimer" style="font-size:11px; color:#e74c3c;">
                 <i class="fas fa-clock"></i> Expires in: <span id="otpCountdown">5:00</span>
             </span>
-            <button onclick="resendOTP()" style="background:transparent; color:#1b4d3e; border:1px solid #1b4d3e; padding:6px 15px; border-radius:4px; cursor:pointer; font-size:11px; font-family:'Times New Roman', Times, serif;">
+            <button onclick="resendOTP()" style="background:transparent; color:#1b4d3e; border:1px solid #1b4d3e; padding:6px 15px; border-radius:8px; cursor:pointer; font-size:11px; display:flex; align-items:center; gap:4px;">
                 <i class="fas fa-redo"></i> Resend OTP
             </button>
         </div>
 
-        <div style="margin-top:15px; padding-top:12px; border-top:1px solid #eee; display:flex; gap:8px; justify-content:flex-end;">
-            <button onclick="closeOTPModal()" style="background:#95a5a6; color:white; border:none; padding:6px 15px; border-radius:4px; cursor:pointer; font-family:'Times New Roman', Times, serif; font-size:12px;">
+        <div style="margin-top:15px; padding-top:12px; border-top:1px solid #f1f5f9; display:flex; gap:8px; justify-content:flex-end;">
+            <button onclick="closeOTPModal()" style="background:#94a3b8; color:white; border:none; padding:6px 15px; border-radius:8px; cursor:pointer; font-size:12px;">
                 Cancel
             </button>
         </div>
@@ -1182,6 +916,7 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
 </form>
 
 <script>
+    // ===== DARK MODE =====
     function toggleDarkMode() {
         document.body.classList.toggle('dark-mode');
         const isDarkMode = document.body.classList.contains('dark-mode');
@@ -1191,75 +926,67 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
             btn.innerHTML = isDarkMode ? '<i class="fas fa-sun"></i> Light Mode' : '<i class="fas fa-moon"></i> Dark Mode';
         }
     }
-
     if (localStorage.getItem('darkMode') === 'true') {
         document.body.classList.add('dark-mode');
         const btn = document.querySelector('.dark-mode-toggle');
-        if (btn) {
-            btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
-        }
+        if (btn) btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
     }
 
-    function confirmLogout() {
-        if(confirm('Are you sure you want to logout?')) {
-            window.location.href = '?logout=1';
-        }
-    }
-
+    // ===== CHARTS (CHART.JS) =====
+    // 1. Submission Status Doughnut
     new Chart(document.getElementById('submissionStatusChart'), {
         type: 'doughnut',
         data: {
             labels: ['Pending', 'Approved', 'Declined'],
-            datasets: [{ data: [<?php echo $pendingSubmissions; ?>, <?php echo $approvedSubmissions; ?>, <?php echo $declinedSubmissions; ?>], backgroundColor: ['#f39c12', '#27ae60', '#e74c3c'], borderWidth: 0 }]
-        },
-        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } } }
-    });
-
-    const officeLabels = [<?php foreach($officeRequirements as $o) { echo "'" . $o['office'] . "',"; } ?>];
-    const officeCounts = [<?php foreach($officeRequirements as $o) { echo $o['count'] . ","; } ?>];
-    new Chart(document.getElementById('officeRequirementsChart'), {
-        type: 'bar',
-        data: {
-            labels: officeLabels,
-            datasets: [{ label: 'Requirements', data: officeCounts, backgroundColor: '#1b4d3e', borderRadius: 3 }]
+            datasets: [{
+                data: [<?php echo $pendingSubmissions; ?>, <?php echo $approvedSubmissions; ?>, <?php echo $declinedSubmissions; ?>],
+                backgroundColor: ['#f39c12', '#27ae60', '#e74c3c'],
+                borderWidth: 0
+            }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: true,
-            plugins: { legend: { display: false } },
-            scales: { y: { beginAtZero: true, title: { display: true, text: 'Count' } } },
-            indexAxis: 'y'
+            plugins: { legend: { display: false } }
         }
     });
 
+    // 2. Submissions Trend (Line)
     const monthLabels = [<?php foreach($submissionsByMonth as $m) { echo "'" . $m['month'] . "',"; } ?>];
     const submissionCounts = [<?php foreach($submissionsByMonth as $m) { echo $m['count'] . ","; } ?>];
     new Chart(document.getElementById('submissionsTrendChart'), {
         type: 'line',
         data: {
             labels: monthLabels,
-            datasets: [{ label: 'Submissions', data: submissionCounts, borderColor: '#1b4d3e', backgroundColor: 'rgba(27, 77, 62, 0.1)', tension: 0.3, fill: true }]
+            datasets: [{
+                label: 'Submissions',
+                data: submissionCounts,
+                borderColor: '#1b4d3e',
+                backgroundColor: 'rgba(27, 77, 62, 0.1)',
+                tension: 0.3,
+                fill: true,
+                pointBackgroundColor: '#1b4d3e',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2,
+                pointRadius: 4
+            }]
         },
-        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+                x: { grid: { display: false } }
+            }
+        }
     });
 
-    new Chart(document.getElementById('systemOverviewChart'), {
-        type: 'doughnut',
-        data: {
-            labels: ['Courses', 'Offices', 'Sections'],
-            datasets: [{ data: [<?php echo $totalCourses; ?>, <?php echo $totalOffices; ?>, <?php echo $totalSections; ?>], backgroundColor: ['#3498db', '#e67e22', '#9b59b6'], borderWidth: 0 }]
-        },
-        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } } }
-    });
+    // ===== EMAIL MODAL =====
+    function openEmailModal() { document.getElementById('emailModal').classList.add('active'); }
+    function closeEmailModal() { document.getElementById('emailModal').classList.remove('active'); }
 
-    function openEmailModal() {
-        document.getElementById('emailModal').classList.add('active');
-    }
-
-    function closeEmailModal() {
-        document.getElementById('emailModal').classList.remove('active');
-    }
-
+    // ===== OTP =====
     let otpTimerInterval = null;
     let otpCountdownSeconds = 300;
     let currentDeleteData = { table: '', item_id: 0, item_name: '' };
@@ -1278,17 +1005,14 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
 
     function closeOTPModal() {
         document.getElementById('otpModal').style.display = 'none';
-        if (otpTimerInterval) {
-            clearInterval(otpTimerInterval);
-            otpTimerInterval = null;
-        }
+        if (otpTimerInterval) { clearInterval(otpTimerInterval); otpTimerInterval = null; }
         document.getElementById('otpStatus').style.display = 'none';
     }
 
     function sendOTP(table, itemId, itemName) {
         const statusDiv = document.getElementById('otpStatus');
         statusDiv.style.display = 'block';
-        statusDiv.style.background = '#f0f8ff';
+        statusDiv.style.background = '#eff6ff';
         statusDiv.style.color = '#1b4d3e';
         statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending OTP to your email...';
 
@@ -1300,41 +1024,37 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                statusDiv.style.background = '#d4edda';
-                statusDiv.style.color = '#155724';
+                statusDiv.style.background = '#dcfce7';
+                statusDiv.style.color = '#166534';
                 statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
                 startOTPTimer();
             } else {
-                statusDiv.style.background = '#f8d7da';
-                statusDiv.style.color = '#721c24';
+                statusDiv.style.background = '#fee2e2';
+                statusDiv.style.color = '#991b1b';
                 statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
             }
         })
-        .catch(error => {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
+        .catch(() => {
+            statusDiv.style.background = '#fee2e2';
+            statusDiv.style.color = '#991b1b';
             statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Failed to send OTP. Please try again.';
         });
     }
 
     function startOTPTimer() {
-        if (otpTimerInterval) {
-            clearInterval(otpTimerInterval);
-        }
+        if (otpTimerInterval) clearInterval(otpTimerInterval);
         otpCountdownSeconds = 300;
         updateOTPTimerDisplay();
-
         otpTimerInterval = setInterval(function() {
             otpCountdownSeconds--;
             updateOTPTimerDisplay();
-
             if (otpCountdownSeconds <= 0) {
                 clearInterval(otpTimerInterval);
                 otpTimerInterval = null;
                 const statusDiv = document.getElementById('otpStatus');
                 statusDiv.style.display = 'block';
-                statusDiv.style.background = '#f8d7da';
-                statusDiv.style.color = '#721c24';
+                statusDiv.style.background = '#fee2e2';
+                statusDiv.style.color = '#991b1b';
                 statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> OTP has expired. Please click "Resend OTP" to get a new code.';
                 document.getElementById('otpCodeInput').disabled = true;
             }
@@ -1346,12 +1066,7 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         const seconds = otpCountdownSeconds % 60;
         document.getElementById('otpCountdown').textContent =
             String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
-
-        if (otpCountdownSeconds < 60) {
-            document.getElementById('otpCountdown').style.color = '#e74c3c';
-        } else {
-            document.getElementById('otpCountdown').style.color = '#27ae60';
-        }
+        document.getElementById('otpCountdown').style.color = otpCountdownSeconds < 60 ? '#e74c3c' : '#27ae60';
     }
 
     function verifyOTP() {
@@ -1359,15 +1074,15 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
             const statusDiv = document.getElementById('otpStatus');
             statusDiv.style.display = 'block';
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
+            statusDiv.style.background = '#fee2e2';
+            statusDiv.style.color = '#991b1b';
             statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Please enter a valid 6-digit OTP code.';
             return;
         }
 
         const statusDiv = document.getElementById('otpStatus');
         statusDiv.style.display = 'block';
-        statusDiv.style.background = '#f0f8ff';
+        statusDiv.style.background = '#eff6ff';
         statusDiv.style.color = '#1b4d3e';
         statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying OTP...';
 
@@ -1377,34 +1092,24 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         formData.append('table', currentDeleteData.table);
         formData.append('item_id', currentDeleteData.item_id);
 
-        fetch('', {
-            method: 'POST',
-            body: formData
-        })
+        fetch('', { method: 'POST', body: formData })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                statusDiv.style.background = '#d4edda';
-                statusDiv.style.color = '#155724';
+                statusDiv.style.background = '#dcfce7';
+                statusDiv.style.color = '#166534';
                 statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message + ' Refreshing page...';
-
-                if (otpTimerInterval) {
-                    clearInterval(otpTimerInterval);
-                    otpTimerInterval = null;
-                }
-
-                setTimeout(function() {
-                    window.location.reload();
-                }, 1500);
+                if (otpTimerInterval) { clearInterval(otpTimerInterval); otpTimerInterval = null; }
+                setTimeout(function() { window.location.reload(); }, 1500);
             } else {
-                statusDiv.style.background = '#f8d7da';
-                statusDiv.style.color = '#721c24';
+                statusDiv.style.background = '#fee2e2';
+                statusDiv.style.color = '#991b1b';
                 statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
             }
         })
-        .catch(error => {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
+        .catch(() => {
+            statusDiv.style.background = '#fee2e2';
+            statusDiv.style.color = '#991b1b';
             statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Verification failed. Please try again.';
         });
     }
@@ -1412,7 +1117,7 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
     function resendOTP() {
         const statusDiv = document.getElementById('otpStatus');
         statusDiv.style.display = 'block';
-        statusDiv.style.background = '#f0f8ff';
+        statusDiv.style.background = '#eff6ff';
         statusDiv.style.color = '#1b4d3e';
         statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending new OTP...';
 
@@ -1427,19 +1132,19 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                statusDiv.style.background = '#d4edda';
-                statusDiv.style.color = '#155724';
+                statusDiv.style.background = '#dcfce7';
+                statusDiv.style.color = '#166534';
                 statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
                 startOTPTimer();
             } else {
-                statusDiv.style.background = '#f8d7da';
-                statusDiv.style.color = '#721c24';
+                statusDiv.style.background = '#fee2e2';
+                statusDiv.style.color = '#991b1b';
                 statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
             }
         })
-        .catch(error => {
-            statusDiv.style.background = '#f8d7da';
-            statusDiv.style.color = '#721c24';
+        .catch(() => {
+            statusDiv.style.background = '#fee2e2';
+            statusDiv.style.color = '#991b1b';
             statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Failed to resend OTP. Please try again.';
         });
     }
@@ -1448,29 +1153,20 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         const otpInput = document.getElementById('otpCodeInput');
         if (otpInput) {
             otpInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    verifyOTP();
-                }
+                if (e.key === 'Enter') verifyOTP();
             });
         }
     });
 
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            closeEmailModal();
-            closeOTPModal();
-        }
+        if (e.key === 'Escape') { closeEmailModal(); closeOTPModal(); }
     });
 
     window.onclick = function(e) {
         const emailModal = document.getElementById('emailModal');
         const otpModal = document.getElementById('otpModal');
-        if (e.target === emailModal) {
-            closeEmailModal();
-        }
-        if (e.target === otpModal) {
-            closeOTPModal();
-        }
+        if (e.target === emailModal) closeEmailModal();
+        if (e.target === otpModal) closeOTPModal();
     };
 </script>
 

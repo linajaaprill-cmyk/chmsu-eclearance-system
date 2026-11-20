@@ -22,6 +22,44 @@ $filter_course = isset($_GET['filter_course']) ? $_GET['filter_course'] : '';
 $filter_year = isset($_GET['filter_year']) ? $_GET['filter_year'] : '';
 $filter_section = isset($_GET['filter_section']) ? $_GET['filter_section'] : '';
 
+// ============================================
+// SHARED PROFESSIONAL SORT
+// ============================================
+if (!function_exists('sortStudentRowsProfessional')) {
+    function sortStudentRowsProfessional($rows) {
+        usort($rows, function($a, $b) {
+            $ac = strtoupper(trim((string)($a['chmsu_course'] ?? '')));
+            $bc = strtoupper(trim((string)($b['chmsu_course'] ?? '')));
+            $cmp = strnatcasecmp($ac, $bc);
+            if ($cmp !== 0) return $cmp;
+
+            $ay = intval($a['chmsu_year'] ?? 0);
+            $by = intval($b['chmsu_year'] ?? 0);
+            if ($ay !== $by) return $ay - $by;
+
+            $as = strtoupper(trim((string)($a['chmsu_section'] ?? '')));
+            $bs = strtoupper(trim((string)($b['chmsu_section'] ?? '')));
+            $cmp = strnatcasecmp($as, $bs);
+            if ($cmp !== 0) return $cmp;
+
+            $al = strtoupper(trim((string)($a['chmsu_last_name'] ?? '')));
+            $bl = strtoupper(trim((string)($b['chmsu_last_name'] ?? '')));
+            $cmp = strnatcasecmp($al, $bl);
+            if ($cmp !== 0) return $cmp;
+
+            $af = strtoupper(trim((string)($a['chmsu_first_name'] ?? '')));
+            $bf = strtoupper(trim((string)($b['chmsu_first_name'] ?? '')));
+            $cmp = strnatcasecmp($af, $bf);
+            if ($cmp !== 0) return $cmp;
+
+            $am = strtoupper(trim((string)($a['chmsu_middle_name'] ?? '')));
+            $bm = strtoupper(trim((string)($b['chmsu_middle_name'] ?? '')));
+            return strnatcasecmp($am, $bm);
+        });
+        return $rows;
+    }
+}
+
 // Build WHERE conditions for initial load
 $conditions = array();
 $conditions[] = "is_archived = 0";
@@ -30,16 +68,20 @@ if($filter_year) $conditions[] = "chmsu_year = '$filter_year'";
 if($filter_section) $conditions[] = "chmsu_section = '$filter_section'";
 $where_sql = "WHERE " . implode(" AND ", $conditions);
 
+// ============================================
+// HANDLE FORM SUBMISSIONS (BEFORE ANY HTML OUTPUT)
+// ============================================
+
 // Handle Delete Single Student
 if (isset($_POST['delete_single']) && isset($_POST['student_id'])) {
     $student_id = sanitize($_POST['student_id']);
     $check = $conn->query("SELECT * FROM chmsu_user_accounts WHERE chmsu_student_id='$student_id'");
     if ($check->num_rows > 0) {
-        $error = "Cannot delete student with existing account. Remove account first.";
+        $_SESSION['masterlist_error'] = "Cannot delete student with existing account. Remove account first.";
     } else {
         $conn->query("DELETE FROM chmsu_students_master WHERE chmsu_student_id='$student_id'");
         logActivity($conn, $office, 'registrar', "Deleted student: $student_id");
-        $success = "Student deleted successfully!";
+        $_SESSION['masterlist_success'] = "Student deleted successfully!";
     }
     header("Location: ?section=masterlist");
     exit;
@@ -62,10 +104,10 @@ if (isset($_POST['bulk_delete']) && isset($_POST['selected_students'])) {
     }
     if ($deleted > 0) {
         logActivity($conn, $office, 'registrar', "Bulk deleted $deleted students");
-        $success = "$deleted students deleted successfully!";
+        $_SESSION['masterlist_success'] = "$deleted students deleted successfully!";
     }
     if ($errors > 0) {
-        $error = "$errors students have active accounts and cannot be deleted.";
+        $_SESSION['masterlist_error'] = "$errors students have active accounts and cannot be deleted.";
     }
     header("Location: ?section=masterlist");
     exit;
@@ -83,10 +125,10 @@ if (isset($_POST['edit_student'])) {
     $section = sanitize($_POST['section']);
     $is_irregular = isset($_POST['is_irregular']) ? 1 : 0;
     $fullName = "$last, $first, $middle";
-    
-    $conn->query("UPDATE chmsu_students_master SET 
-                  chmsu_last_name='$last', 
-                  chmsu_first_name='$first', 
+
+    $conn->query("UPDATE chmsu_students_master SET
+                  chmsu_last_name='$last',
+                  chmsu_first_name='$first',
                   chmsu_middle_name='$middle',
                   chmsu_full_name='$fullName',
                   chmsu_birthdate='$birth',
@@ -96,7 +138,7 @@ if (isset($_POST['edit_student'])) {
                   is_irregular='$is_irregular'
                   WHERE chmsu_student_id='$original_id'");
     logActivity($conn, $office, 'registrar', "Edited student: $original_id");
-    $success = "Student updated successfully!";
+    $_SESSION['masterlist_success'] = "Student updated successfully!";
     header("Location: ?section=masterlist");
     exit;
 }
@@ -106,22 +148,38 @@ if (isset($_POST['action']) && $_POST['action'] == 'add_irregular') {
     $student_id = sanitize($_POST['student_id']);
     $masterCheck = $conn->query("SELECT * FROM chmsu_students_master WHERE chmsu_student_id='$student_id'");
     if ($masterCheck->num_rows == 0) {
-        $error = "Student ID not found in Master List!";
+        $_SESSION['masterlist_error'] = "Student ID not found in Master List!";
     } else {
         $student = $masterCheck->fetch_assoc();
         if ($student['is_irregular'] == 1) {
-            $error = "Student is already marked as Irregular!";
+            $_SESSION['masterlist_error'] = "Student is already marked as Irregular!";
         } elseif ($student['is_archived'] == 1) {
-            $error = "Student is already archived!";
+            $_SESSION['masterlist_error'] = "Student is already archived!";
         } else {
             $conn->query("UPDATE chmsu_students_master SET is_irregular = 1 WHERE chmsu_student_id='$student_id'");
             logActivity($conn, $office, 'registrar', "Marked student as Irregular: $student_id");
-            $success = "Student marked as Irregular successfully!";
+            $_SESSION['masterlist_success'] = "Student marked as Irregular successfully!";
         }
     }
     header("Location: ?section=masterlist");
     exit;
 }
+
+// ============================================
+// FLASH MESSAGES FROM SESSION
+// ============================================
+if (isset($_SESSION['masterlist_error'])) {
+    $error = $_SESSION['masterlist_error'];
+    unset($_SESSION['masterlist_error']);
+}
+if (isset($_SESSION['masterlist_success'])) {
+    $success = $_SESSION['masterlist_success'];
+    unset($_SESSION['masterlist_success']);
+}
+
+// ============================================
+// AJAX ENDPOINTS
+// ============================================
 
 // AJAX endpoint to get student info
 if (isset($_GET['get_student_info']) && isset($_GET['student_id'])) {
@@ -144,18 +202,18 @@ if (isset($_GET['get_student_info']) && isset($_GET['student_id'])) {
     exit;
 }
 
-// AJAX endpoint to get sections for the FILTER dropdown based on course and year
+// AJAX endpoint to get sections for FILTER dropdown
 if (isset($_GET['get_filter_sections'])) {
     header('Content-Type: application/json');
     $course = sanitize($_GET['course']);
     $year = sanitize($_GET['year']);
-    
+
     if (!empty($year)) {
         $sections = $conn->query("SELECT DISTINCT section_name FROM chmsu_course_sections WHERE course='$course' AND year='$year' ORDER BY section_name");
     } else {
         $sections = $conn->query("SELECT DISTINCT section_name FROM chmsu_course_sections WHERE course='$course' ORDER BY section_name");
     }
-    
+
     $result = [];
     while ($s = $sections->fetch_assoc()) {
         $result[] = $s;
@@ -164,12 +222,12 @@ if (isset($_GET['get_filter_sections'])) {
     exit;
 }
 
-// AJAX endpoint to get sections for the ADD FORM dropdown
+// AJAX endpoint to get sections for ADD FORM dropdown
 if (isset($_GET['get_sections_for_add'])) {
     header('Content-Type: application/json');
     $course = sanitize($_GET['course']);
     $year = sanitize($_GET['year']);
-    
+
     $sections = $conn->query("SELECT section_name FROM chmsu_course_sections WHERE course='$course' AND year='$year' ORDER BY section_name");
     $result = [];
     while ($s = $sections->fetch_assoc()) {
@@ -179,26 +237,44 @@ if (isset($_GET['get_sections_for_add'])) {
     exit;
 }
 
-// AJAX handler for filtering table (NO PAGE REFRESH)
-if (isset($_GET['ajax_filter'])) {
-    $filter_course = isset($_GET['filter_course']) ? sanitize($_GET['filter_course']) : '';
-    $filter_year = isset($_GET['filter_year']) ? sanitize($_GET['filter_year']) : '';
-    $filter_section = isset($_GET['filter_section']) ? sanitize($_GET['filter_section']) : '';
-    
-    $conditions = array();
-    $conditions[] = "is_archived = 0";
-    if($filter_course) $conditions[] = "chmsu_course = '$filter_course'";
-    if($filter_year) $conditions[] = "chmsu_year = '$filter_year'";
-    if($filter_section) $conditions[] = "chmsu_section = '$filter_section'";
-    $where_sql = "WHERE " . implode(" AND ", $conditions);
-    
-    $students = $conn->query("SELECT * FROM chmsu_students_master $where_sql ORDER BY chmsu_course, chmsu_year, chmsu_section, chmsu_last_name");
-    
-    $output = '';
-    if($students && $students->num_rows > 0):
-        while($s = $students->fetch_assoc()):
-            $hasAccount = $conn->query("SELECT * FROM chmsu_user_accounts WHERE chmsu_student_id='{$s['chmsu_student_id']}'")->num_rows > 0;
+// ============================================
+// ROW BUILDER
+// ============================================
+if (!function_exists('buildMasterListRowsHtml')) {
+    function buildMasterListRowsHtml($conn, $rows) {
+        $output = '';
+        $lastGroup = null;
+
+        if (empty($rows)) {
+            return '<tr><td colspan="11" style="text-align: center;">No students found</td></tr>';
+        }
+
+        foreach ($rows as $s) {
+            $course  = strtoupper(trim((string)$s['chmsu_course']));
+            $year    = intval($s['chmsu_year']);
+            $section = strtoupper(trim((string)$s['chmsu_section']));
+
+            $yearSuffix = 'th';
+            if ($year === 1) $yearSuffix = 'st';
+            elseif ($year === 2) $yearSuffix = 'nd';
+            elseif ($year === 3) $yearSuffix = 'rd';
+            $yearLabel = $year > 0 ? ($year . $yearSuffix . ' Year') : 'Unassigned Year';
+
+            $groupKey = $course . '||' . $year . '||' . $section;
+
+            if ($groupKey !== $lastGroup) {
+                $groupTitle = $course . ' — ' . $yearLabel . ' — Section ' . ($section !== '' ? $section : '—');
+                $output .= '<tr class="group-header-row">';
+                $output .= '<td colspan="11">';
+                $output .= '<i class="fas fa-layer-group"></i> ' . htmlspecialchars($groupTitle);
+                $output .= '</td>';
+                $output .= '</tr>';
+                $lastGroup = $groupKey;
+            }
+
+            $hasAccount  = $conn->query("SELECT * FROM chmsu_user_accounts WHERE chmsu_student_id='{$s['chmsu_student_id']}'")->num_rows > 0;
             $isIrregular = $s['is_irregular'] == 1;
+
             $output .= '<tr data-name="' . strtolower($s['chmsu_full_name']) . '">';
             $output .= '<td><input type="checkbox" name="selected_students[]" value="' . $s['chmsu_student_id'] . '" class="student-checkbox"></td>';
             $output .= '<td><code>' . $s['chmsu_student_id'] . '</code></td>';
@@ -225,21 +301,69 @@ if (isset($_GET['ajax_filter'])) {
             }
             $output .= '</td>';
             $output .= '</tr>';
-        endwhile;
-    else:
-        $output .= '<tr><td colspan="11" style="text-align: center;">No students found</td></tr>';
-    endif;
-    
-    echo $output;
+        }
+
+        return $output;
+    }
+}
+
+// AJAX handler for filtering table
+if (isset($_GET['ajax_filter'])) {
+    $filter_course = isset($_GET['filter_course']) ? sanitize($_GET['filter_course']) : '';
+    $filter_year = isset($_GET['filter_year']) ? sanitize($_GET['filter_year']) : '';
+    $filter_section = isset($_GET['filter_section']) ? sanitize($_GET['filter_section']) : '';
+
+    $conditions = array();
+    $conditions[] = "is_archived = 0";
+    if($filter_course) $conditions[] = "chmsu_course = '$filter_course'";
+    if($filter_year) $conditions[] = "chmsu_year = '$filter_year'";
+    if($filter_section) $conditions[] = "chmsu_section = '$filter_section'";
+    $where_sql = "WHERE " . implode(" AND ", $conditions);
+
+    $students = $conn->query("
+        SELECT *
+        FROM chmsu_students_master
+        $where_sql
+        ORDER BY
+            chmsu_course ASC,
+            CAST(chmsu_year AS UNSIGNED) ASC,
+            chmsu_section ASC,
+            chmsu_last_name ASC,
+            chmsu_first_name ASC
+    ");
+
+    $rows = [];
+    while ($r = $students->fetch_assoc()) $rows[] = $r;
+    $rows = sortStudentRowsProfessional($rows);
+
+    echo buildMasterListRowsHtml($conn, $rows);
     exit;
 }
 
-// Get total counts for display
+// Get totals for display
 $totalQuery = $conn->query("SELECT COUNT(*) as total FROM chmsu_students_master $where_sql");
 $totalFiltered = $totalQuery->fetch_assoc()['total'];
 
 $totalAllQuery = $conn->query("SELECT COUNT(*) as total FROM chmsu_students_master WHERE is_archived = 0");
 $totalAll = $totalAllQuery->fetch_assoc()['total'];
+
+// Initial rows — same sort
+$initialRows = [];
+$initialStudents = $conn->query("
+    SELECT *
+    FROM chmsu_students_master
+    $where_sql
+    ORDER BY
+        chmsu_course ASC,
+        CAST(chmsu_year AS UNSIGNED) ASC,
+        chmsu_section ASC,
+        chmsu_last_name ASC,
+        chmsu_first_name ASC
+");
+if ($initialStudents && $initialStudents->num_rows > 0) {
+    while ($r = $initialStudents->fetch_assoc()) $initialRows[] = $r;
+}
+$initialRows = sortStudentRowsProfessional($initialRows);
 ?>
 
 <!DOCTYPE html>
@@ -252,7 +376,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Times New Roman', Times, serif; background: #f5f5f5; font-size: 14px; }
-        
+
         .header {
             background: #1b4d3e;
             color: white;
@@ -282,9 +406,9 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             border: none;
             cursor: pointer;
         }
-        
+
         .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
-        
+
         .registrar-sidebar {
             width: 260px;
             background: #1b4d3e;
@@ -310,7 +434,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         }
         .registrar-sidebar .sidebar-menu a:hover,
         .registrar-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
-        
+
         .main-content {
             flex: 1;
             margin-left: 260px;
@@ -328,7 +452,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             margin-bottom: 20px;
         }
         .dashboard-header-bar h2 { font-size: 18px; font-weight: normal; color: #1b4d3e; }
-        
+
         .content-card {
             background: white;
             border: 1px solid #ddd;
@@ -347,7 +471,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             gap: 10px;
         }
         .content-card-body { padding: 15px; }
-        
+
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; margin-bottom: 5px; color: #333; font-size: 12px; }
         input, select {
@@ -357,7 +481,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             font-size: 13px;
         }
         input:focus, select:focus { outline: none; border-color: #1b4d3e; }
-        
+
         .btn {
             padding: 8px 15px;
             border: none;
@@ -375,11 +499,11 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         .btn-warning { background: #f39c12; color: white; }
         .btn-warning:hover { background: #e67e22; }
         .btn-sm { padding: 4px 8px; font-size: 11px; }
-        
+
         .filter-row { display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 15px; }
         .search-box { width: 100%; padding: 8px 12px; border: 1px solid #ddd; margin-bottom: 15px; }
         .export-buttons { display: flex; gap: 10px; margin-bottom: 15px; }
-        
+
         .student-count-bar {
             background: #e8f5e9;
             padding: 10px 15px;
@@ -405,7 +529,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             background: #f8f9fa;
             border-radius: 4px;
         }
-        
+
         .plain-table {
             width: 100%;
             border-collapse: collapse;
@@ -419,7 +543,21 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         }
         .plain-table th { background: #f8f9fa; font-weight: normal; }
         .plain-table input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
-        
+
+        .group-header-row td {
+            background: #1b4d3e;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+            padding: 10px 12px !important;
+            border: 1px solid #14382d !important;
+        }
+        .group-header-row td i {
+            color: #f1c40f;
+            margin-right: 6px;
+        }
+
         .badge-irregular {
             background: #e74c3c;
             color: white;
@@ -438,11 +576,11 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             font-weight: bold;
             display: inline-block;
         }
-        
+
         .hidden { display: none; }
         .error { background: #f8d7da; color: #721c24; padding: 10px; margin-bottom: 15px; border-left: 3px solid #e74c3c; }
         .success { background: #d4edda; color: #155724; padding: 10px; margin-bottom: 15px; border-left: 3px solid #27ae60; }
-        
+
         .modal-overlay {
             display: none;
             position: fixed;
@@ -464,7 +602,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         }
         .modal-content h3 { margin-bottom: 20px; color: #1b4d3e; }
         .modal-buttons { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
-        
+
         body.dark-mode { background: #0a0a0a; }
         body.dark-mode .main-content { background: #0a0a0a; }
         body.dark-mode .dashboard-header-bar,
@@ -472,11 +610,12 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         body.dark-mode .dashboard-header-bar h2 { color: #f1c40f; }
         body.dark-mode .plain-table th { background: #2c2c2c; color: #fff; border-color: #444; }
         body.dark-mode .plain-table td { border-color: #333; color: #fff; }
+        body.dark-mode .group-header-row td { background: #0f3b2f; color: #f1c40f; border-color: #1b4d3e !important; }
         body.dark-mode input, body.dark-mode select { background: #2c2c2c; border-color: #444; color: #fff; }
         body.dark-mode .student-count-bar { background: #1a3a2a; border-left-color: #27ae60; }
         body.dark-mode .bulk-actions { background: #2c2c2c; }
         body.dark-mode .modal-content { background: #1a1a1a; color: #fff; }
-        
+
         @media (max-width: 768px) {
             .registrar-sidebar { width: 100%; position: relative; height: auto; }
             .main-content { margin-left: 0; }
@@ -509,9 +648,12 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             <li><a href="?section=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
             <li><a href="?section=masterlist" class="active"><i class="fas fa-users"></i> Master List</a></li>
             <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
+            <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
             <li><a href="?section=archived"><i class="fas fa-archive"></i> Archive</a></li>
             <li><a href="?section=promotion"><i class="fas fa-arrow-up"></i> Student Promotion</a></li>
+            <li><a href="?section=note"><i class="fas fa-rss"></i> Feed Updates</a></li>
+            <li><a href="?section=chat"><i class="fas fa-comment-dots"></i> Messages</a></li>
             <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
                 <a href="#" onclick="confirmLogout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
             </li>
@@ -523,20 +665,20 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             </div>
         </div>
     </div>
-    
+
     <div class="main-content">
         <div class="dashboard-header-bar">
             <h2>Master Student List</h2>
             <span><?php echo date('F d, Y'); ?></span>
         </div>
-        
+
         <?php if ($error): ?>
             <div class="error"><?php echo $error; ?></div>
         <?php endif; ?>
         <?php if ($success): ?>
             <div class="success"><?php echo $success; ?></div>
         <?php endif; ?>
-        
+
         <!-- ADD IRREGULAR STUDENT FORM -->
         <div class="content-card" style="border-left: 4px solid #e74c3c;">
             <div class="content-card-header" style="background: #fce8e6;">
@@ -575,7 +717,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                 </form>
             </div>
         </div>
-        
+
         <!-- REGULAR ADD STUDENT FORM -->
         <div class="content-card">
             <div class="content-card-header">
@@ -600,7 +742,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                         </div>
                     </form>
                 </div>
-                
+
                 <div id="add-student-form" class="hidden" style="background:#f8f9fa; padding:12px; margin-bottom:12px;">
                     <form method="POST">
                         <input type="hidden" name="action" value="add_master">
@@ -641,8 +783,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                         <button type="button" class="btn btn-back btn-sm" onclick="toggleForm('add-student-form')">Cancel</button>
                     </form>
                 </div>
-                
-                <!-- FILTER ROW - DYNAMIC SECTION DROPDOWN -->
+
                 <div class="filter-row">
                     <div class="form-group">
                         <label>Course</label>
@@ -674,11 +815,10 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                         <a href="?section=masterlist" class="btn btn-primary btn-sm" onclick="resetFilters(); return false;">Clear Filters</a>
                     </div>
                 </div>
-                
-                <!-- STUDENT COUNT BAR -->
+
                 <div class="student-count-bar" id="studentCountBar">
                     <div>
-                        <i class="fas fa-users"></i> 
+                        <i class="fas fa-users"></i>
                         <strong>Total Students: <span class="count" id="totalCount"><?php echo $totalFiltered; ?></span></strong>
                         <?php if ($filter_course || $filter_year || $filter_section): ?>
                             <span style="font-size: 11px; color: #666;"> (Filtered from <?php echo $totalAll; ?> total)</span>
@@ -690,18 +830,16 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                         <?php if ($filter_section): ?><span class="badge">Section: <?php echo htmlspecialchars($filter_section); ?></span><?php endif; ?>
                     </div>
                 </div>
-                
-                <!-- EXPORT BUTTONS -->
+
                 <div class="export-buttons">
                     <a href="?export=excel&course=<?php echo $filter_course; ?>&year=<?php echo $filter_year; ?>&section=<?php echo $filter_section; ?>" class="btn btn-excel">Export Excel</a>
                     <a href="?export=word&course=<?php echo $filter_course; ?>&year=<?php echo $filter_year; ?>&section=<?php echo $filter_section; ?>" class="btn btn-word">Export Word</a>
                 </div>
-                
-                <!-- BULK DELETE ACTIONS -->
+
                 <form method="POST" id="bulkDeleteForm" onsubmit="return confirmBulkDelete()">
                     <div class="bulk-actions">
                         <label style="display: flex; align-items: center; gap: 5px;">
-                            <input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll()"> 
+                            <input type="checkbox" id="selectAllCheckbox" onclick="toggleSelectAll()">
                             <strong>Select All</strong>
                         </label>
                         <button type="submit" name="bulk_delete" class="btn btn-danger btn-sm" onclick="return confirmBulkDelete()">
@@ -709,9 +847,9 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                         </button>
                         <span style="font-size: 11px; color: #666;">Note: Students with existing accounts cannot be deleted</span>
                     </div>
-                    
+
                     <input type="text" class="search-box" id="masterSearch" placeholder="Search student by name..." onkeyup="searchMasterList()">
-                    
+
                     <div class="table-responsive">
                         <table class="plain-table" id="masterTable">
                             <thead>
@@ -730,53 +868,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                                 </tr>
                             </thead>
                             <tbody id="masterTableBody">
-                                <?php
-                                $students = $conn->query("SELECT * FROM chmsu_students_master $where_sql ORDER BY chmsu_course, chmsu_year, chmsu_section, chmsu_last_name");
-                                if($students->num_rows > 0):
-                                    while($s = $students->fetch_assoc()):
-                                        $hasAccount = $conn->query("SELECT * FROM chmsu_user_accounts WHERE chmsu_student_id='{$s['chmsu_student_id']}'")->num_rows > 0;
-                                        $isIrregular = $s['is_irregular'] == 1;
-                                ?>
-                                <tr data-name="<?php echo strtolower($s['chmsu_full_name']); ?>">
-                                    <td><input type="checkbox" name="selected_students[]" value="<?php echo $s['chmsu_student_id']; ?>" class="student-checkbox"></td>
-                                    <td><code><?php echo $s['chmsu_student_id']; ?></code></td>
-                                    <td><?php echo htmlspecialchars($s['chmsu_last_name']); ?></td>
-                                    <td><?php echo htmlspecialchars($s['chmsu_first_name']); ?></td>
-                                    <td><?php echo htmlspecialchars($s['chmsu_middle_name']); ?></td>
-                                    <td><?php echo $s['chmsu_course']; ?></td>
-                                    <td><?php echo $s['chmsu_year']; ?></td>
-                                    <td><?php echo htmlspecialchars($s['chmsu_section']); ?></td>
-                                    <td><?php echo date('F d, Y', strtotime($s['chmsu_birthdate'])); ?></td>
-                                    <td>
-                                        <?php if($isIrregular): ?>
-                                            <span class="badge-irregular"><i class="fas fa-exclamation-triangle"></i> Irregular</span>
-                                        <?php else: ?>
-                                            <span class="badge-regular">Regular</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td style="white-space: nowrap;">
-                                        <button class="btn btn-warning btn-sm" onclick="openEditModal('<?php echo $s['chmsu_student_id']; ?>', '<?php echo addslashes($s['chmsu_last_name']); ?>', '<?php echo addslashes($s['chmsu_first_name']); ?>', '<?php echo addslashes($s['chmsu_middle_name']); ?>', '<?php echo $s['chmsu_birthdate']; ?>', '<?php echo $s['chmsu_course']; ?>', '<?php echo $s['chmsu_year']; ?>', '<?php echo addslashes($s['chmsu_section']); ?>', <?php echo $isIrregular ? 'true' : 'false'; ?>)">
-                                            <i class="fas fa-edit"></i> Edit
-                                        </button>
-                                        <?php if (!$hasAccount): ?>
-                                        <button class="btn btn-danger btn-sm" onclick="deleteSingleStudent('<?php echo $s['chmsu_student_id']; ?>')">
-                                            <i class="fas fa-trash"></i> Delete
-                                        </button>
-                                        <?php else: ?>
-                                        <button class="btn btn-back btn-sm" disabled title="Cannot delete - student has active account">
-                                            <i class="fas fa-lock"></i> Has Account
-                                        </button>
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                                <?php 
-                                    endwhile;
-                                else:
-                                ?>
-                                <tr>
-                                    <td colspan="11" style="text-align: center;">No students found</td>
-                                </tr>
-                                <?php endif; ?>
+                                <?php echo buildMasterListRowsHtml($conn, $initialRows); ?>
                             </tbody>
                         </table>
                     </div>
@@ -833,7 +925,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="is_irregular" id="editIrregular" value="1"> 
+                    <input type="checkbox" name="is_irregular" id="editIrregular" value="1">
                     <i class="fas fa-exclamation-triangle" style="color: #e74c3c;"></i> Mark as Irregular Student
                 </label>
             </div>
@@ -847,7 +939,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
 
 <script>
     let currentScrollPosition = 0;
-    
+
     function toggleDarkMode() {
         document.body.classList.toggle('dark-mode');
         const isDarkMode = document.body.classList.contains('dark-mode');
@@ -857,7 +949,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             btn.innerHTML = isDarkMode ? '<i class="fas fa-sun"></i> Light Mode' : '<i class="fas fa-moon"></i> Dark Mode';
         }
     }
-    
+
     if (localStorage.getItem('darkMode') === 'true') {
         document.body.classList.add('dark-mode');
         const btn = document.querySelector('.dark-mode-toggle');
@@ -865,25 +957,25 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
         }
     }
-    
+
     function confirmLogout() {
         if(confirm('Are you sure you want to logout?')) {
             window.location.href = '?logout=1';
         }
     }
-    
+
     function toggleForm(id) {
         const element = document.getElementById(id);
         if (element) element.classList.toggle('hidden');
     }
-    
+
     function updateGeneratedID() {
         const last = document.getElementById('lastName')?.value || '';
         const first = document.getElementById('firstName')?.value || '';
         const middle = document.getElementById('middleName')?.value || '';
         const birth = document.getElementById('birthdate')?.value || '';
         const generatedIdDiv = document.getElementById('generatedID');
-        
+
         if (last && first && middle && birth && generatedIdDiv) {
             const li = last[0].toUpperCase();
             const fi = first[0].toUpperCase();
@@ -898,17 +990,16 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             generatedIdDiv.textContent = '---';
         }
     }
-    
-    // DYNAMIC SECTION LOADING FOR FILTER - loads sections based on selected course and year
+
     function loadFilterSections() {
         var course = document.getElementById('filter_course_select').value;
         var year = document.getElementById('filter_year_select').value;
         var sectionSelect = document.getElementById('filter_section_select');
-        
+
         if (course) {
             var yearParam = year ? year : '';
             var url = window.location.pathname + '?section=masterlist&get_filter_sections=1&course=' + encodeURIComponent(course) + '&year=' + encodeURIComponent(yearParam);
-            
+
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
@@ -919,7 +1010,6 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                             sectionSelect.innerHTML += '<option value="' + data[i].section_name + '" ' + selected + '>' + data[i].section_name + '</option>';
                         }
                     }
-                    // After loading sections, apply filter
                     filterMasterList();
                 })
                 .catch(error => {
@@ -932,16 +1022,15 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             filterMasterList();
         }
     }
-    
-    // DYNAMIC SECTION LOADING FOR ADD FORM
+
     function loadSectionsForAdd() {
         var course = document.getElementById('addCourseSelect').value;
         var year = document.getElementById('addYearSelect').value;
         var sectionSelect = document.getElementById('addSectionSelect');
-        
+
         if (course && year) {
             var url = window.location.pathname + '?section=masterlist&get_sections_for_add=1&course=' + encodeURIComponent(course) + '&year=' + encodeURIComponent(year);
-            
+
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
@@ -962,31 +1051,30 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             sectionSelect.innerHTML = '<option value="">Select Course and Year First</option>';
         }
     }
-    
-    // AJAX FILTER - NO PAGE REFRESH
+
     function filterMasterList() {
         currentScrollPosition = window.scrollY;
-        
+
         var course = document.getElementById('filter_course_select').value;
         var year = document.getElementById('filter_year_select').value;
         var section = document.getElementById('filter_section_select').value;
-        
+
         var xhr = new XMLHttpRequest();
         xhr.open('GET', window.location.pathname + '?section=masterlist&ajax_filter=1&filter_course=' + encodeURIComponent(course) + '&filter_year=' + encodeURIComponent(year) + '&filter_section=' + encodeURIComponent(section), true);
         xhr.onload = function() {
             if (xhr.status === 200) {
                 document.getElementById('masterTableBody').innerHTML = xhr.responseText;
                 window.scrollTo(0, currentScrollPosition);
-                
-                var rowCount = document.querySelectorAll('#masterTableBody tr:not(:has(td[colspan]))').length;
+
+                var rowCount = document.querySelectorAll('#masterTableBody tr:not(.group-header-row):not(:has(td[colspan]))').length;
                 document.getElementById('totalCount').innerText = rowCount;
-                
+
                 var badgesHtml = '';
                 if (course) badgesHtml += '<span class="badge">Course: ' + course + '</span>';
                 if (year) badgesHtml += '<span class="badge">Year: ' + year + '</span>';
                 if (section) badgesHtml += '<span class="badge">Section: ' + section + '</span>';
                 document.getElementById('filterBadges').innerHTML = badgesHtml;
-                
+
                 document.querySelectorAll('.student-checkbox').forEach(cb => {
                     cb.addEventListener('change', updateSelectAllHeader);
                 });
@@ -994,7 +1082,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         };
         xhr.send();
     }
-    
+
     function resetFilters() {
         document.getElementById('filter_course_select').value = '';
         document.getElementById('filter_year_select').value = '';
@@ -1002,11 +1090,16 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         filterMasterList();
         return false;
     }
-    
+
     function searchMasterList() {
         const search = document.getElementById('masterSearch')?.value.toLowerCase() || '';
         const rows = document.querySelectorAll('#masterTableBody tr');
+
         rows.forEach(row => {
+            if (row.classList.contains('group-header-row')) {
+                row.style.display = '';
+                return;
+            }
             const name = row.dataset.name;
             if (name && name.includes(search)) {
                 row.style.display = '';
@@ -1014,14 +1107,26 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                 row.style.display = 'none';
             }
         });
+
+        const body = document.getElementById('masterTableBody');
+        const allRows = Array.from(body.querySelectorAll('tr'));
+        allRows.forEach((row, idx) => {
+            if (!row.classList.contains('group-header-row')) return;
+            let hasVisible = false;
+            for (let j = idx + 1; j < allRows.length; j++) {
+                if (allRows[j].classList.contains('group-header-row')) break;
+                if (allRows[j].style.display !== 'none') { hasVisible = true; break; }
+            }
+            row.style.display = hasVisible ? '' : 'none';
+        });
+
         updateSelectAllHeader();
     }
-    
+
     function toggleSelectAll() {
         const selectAll = document.getElementById('selectAllCheckbox');
         const checkboxes = document.querySelectorAll('#masterTableBody .student-checkbox');
-        const visibleRows = document.querySelectorAll('#masterTableBody tr:not([style*="display: none"])');
-        
+
         checkboxes.forEach(checkbox => {
             const row = checkbox.closest('tr');
             if (row && row.style.display !== 'none') {
@@ -1030,23 +1135,22 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         });
         updateSelectAllHeader();
     }
-    
+
     function toggleSelectAllFromHeader() {
         const headerCheckbox = document.getElementById('selectAllHeader');
         const checkboxes = document.querySelectorAll('#masterTableBody .student-checkbox');
-        const visibleRows = document.querySelectorAll('#masterTableBody tr:not([style*="display: none"])');
-        
+
         checkboxes.forEach(checkbox => {
             const row = checkbox.closest('tr');
             if (row && row.style.display !== 'none') {
                 checkbox.checked = headerCheckbox.checked;
             }
         });
-        
+
         const mainSelectAll = document.getElementById('selectAllCheckbox');
         if (mainSelectAll) mainSelectAll.checked = headerCheckbox.checked;
     }
-    
+
     function updateSelectAllHeader() {
         const checkboxes = document.querySelectorAll('#masterTableBody .student-checkbox');
         const visibleCheckboxes = Array.from(checkboxes).filter(cb => {
@@ -1059,7 +1163,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         if (headerCheckbox) headerCheckbox.checked = allChecked;
         if (mainSelectAll) mainSelectAll.checked = allChecked;
     }
-    
+
     function confirmBulkDelete() {
         const selected = document.querySelectorAll('#masterTableBody .student-checkbox:checked');
         if (selected.length === 0) {
@@ -1068,7 +1172,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         }
         return confirm('Are you sure you want to delete ' + selected.length + ' selected student(s)? Students with existing accounts cannot be deleted.');
     }
-    
+
     function deleteSingleStudent(studentId) {
         if (confirm('Are you sure you want to delete this student? This action cannot be undone.')) {
             const form = document.createElement('form');
@@ -1078,7 +1182,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
             form.submit();
         }
     }
-    
+
     function openEditModal(id, lastName, firstName, middleName, birthdate, course, year, section, isIrregular) {
         document.getElementById('editOriginalId').value = id;
         document.getElementById('editLastName').value = lastName;
@@ -1091,15 +1195,15 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         document.getElementById('editIrregular').checked = isIrregular;
         document.getElementById('editModal').style.display = 'flex';
     }
-    
+
     function closeEditModal() {
         document.getElementById('editModal').style.display = 'none';
     }
-    
+
     function fetchStudentInfo() {
         const studentId = document.getElementById('irregularStudentId').value;
         if (studentId.length < 5) return;
-        
+
         fetch(`?get_student_info=1&student_id=${studentId}`)
             .then(response => response.json())
             .then(data => {
@@ -1116,7 +1220,7 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
                 }
             });
     }
-    
+
     function validateIrregularForm() {
         const studentId = document.getElementById('irregularStudentId').value;
         if (!studentId) {
@@ -1125,14 +1229,13 @@ $totalAll = $totalAllQuery->fetch_assoc()['total'];
         }
         return confirm('Mark this student as Irregular? They will stay in their current year level until they complete all requirements.');
     }
-    
+
     window.onclick = function(e) {
         if (e.target.classList.contains('modal-overlay')) {
             e.target.style.display = 'none';
         }
     }
-    
-    // Initialize filter sections on page load
+
     document.addEventListener('DOMContentLoaded', function() {
         if (document.getElementById('filter_course_select').value) {
             loadFilterSections();

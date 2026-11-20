@@ -4,6 +4,28 @@
 require_once __DIR__ . '/email.php';
 
 // ============================================
+// AUTO-MIGRATE chmsu_otp.action_type
+// ENUM('delete') silently truncates 'advance' / 'rollback'
+// to '' when saved — which is why semester-change OTPs
+// could never be verified. Convert to VARCHAR(30).
+// Safe, idempotent, no data loss. No-op if already VARCHAR.
+// ============================================
+if (isset($conn) && $conn instanceof mysqli) {
+    $_otp_tbl = $conn->query("SHOW TABLES LIKE 'chmsu_otp'");
+    if ($_otp_tbl && $_otp_tbl->num_rows > 0) {
+        $_otp_col = $conn->query("SHOW COLUMNS FROM chmsu_otp LIKE 'action_type'");
+        if ($_otp_col && $_otp_col->num_rows > 0) {
+            $_otp_info = $_otp_col->fetch_assoc();
+            if (isset($_otp_info['Type']) && stripos($_otp_info['Type'], 'enum') === 0) {
+                $conn->query("ALTER TABLE chmsu_otp MODIFY action_type VARCHAR(30) NOT NULL DEFAULT 'delete'");
+            }
+        }
+        unset($_otp_col, $_otp_info);
+    }
+    unset($_otp_tbl);
+}
+
+// ============================================
 // GENERATE OTP
 // ============================================
 function generateOTP($length = 6) {
@@ -14,7 +36,22 @@ function generateOTP($length = 6) {
 // SEND OTP EMAIL - HARDCODED CREDENTIALS (WORKS)
 // ============================================
 function sendOTPEmail($admin_email, $otp_code, $action = 'delete') {
-    $subject = "🔐 OTP Verification - CHMSU E-Clearance System";
+    $subject = "OTP Verification - CHMSU E-Clearance System";
+
+    // Friendly label for the email body only (no functional effect)
+    $action_label = ucfirst(str_replace('_', ' ', (string)$action));
+
+    // --- DYNAMIC ROLE NAME ---
+    $role_name = 'User';
+    if (isset($_SESSION['office'])) {
+        $role_name = htmlspecialchars($_SESSION['office']);
+    } elseif (isset($_SESSION['admin'])) {
+        $role_name = 'Admin';
+    } elseif (isset($_SESSION['student'])) {
+        $role_name = 'Student';
+    } elseif (isset($GLOBALS['current_email_role'])) {
+        $role_name = htmlspecialchars($GLOBALS['current_email_role']);
+    }
     
     $body = "
     <html>
@@ -32,11 +69,11 @@ function sendOTPEmail($admin_email, $otp_code, $action = 'delete') {
     <body>
         <div class='container'>
             <div class='header'>
-                <h2>🔐 OTP Verification</h2>
+                <h2>OTP Verification</h2>
             </div>
             <div class='content'>
-                <p>Dear <strong>Admin</strong>,</p>
-                <p>You requested to perform a <strong>$action</strong> action in the CHMSU E-Clearance System.</p>
+                <p>Dear <strong>$role_name</strong>,</p>
+                <p>You requested to perform a <strong>$action_label</strong> action in the CHMSU E-Clearance System.</p>
                 <p>Enter the following One-Time Password (OTP):</p>
                 <div class='otp-box'>$otp_code</div>
                 <p>This OTP will expire in <strong>10 minutes</strong>.</p>
@@ -50,15 +87,15 @@ function sendOTPEmail($admin_email, $otp_code, $action = 'delete') {
     </html>
     ";
     
-    // CREDENTIALS FROM .env
+    // HARDCODED CREDENTIALS
     return sendEmail(
         $admin_email,                // 1: to_email
         'Admin',                     // 2: to_name
         $subject,                    // 3: subject
         $body,                       // 4: body
         true,                        // 5: is_html
-        getenv('MAIL_USERNAME'),     // 6: from_email
-        getenv('MAIL_PASSWORD')      // 7: from_password
+        'linajaaprill@gmail.com',    // 6: from_email
+        'lniygbkmrpgbhcbk'           // 7: from_password
     );
 }
 
@@ -120,3 +157,4 @@ function resendOTP($conn, $admin_email, $action_type = 'delete', $item_id = null
     sendOTPEmail($admin_email, $otp_code, $action_type);
     return $otp_code;
 }
+?>

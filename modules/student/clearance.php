@@ -2,53 +2,372 @@
 $student = $conn->query("SELECT * FROM chmsu_user_accounts WHERE chmsu_student_id='{$_SESSION['student']}'")->fetch_assoc();
 $master = $conn->query("SELECT * FROM chmsu_students_master WHERE chmsu_student_id='{$_SESSION['student']}'")->fetch_assoc();
 $selectedOffice = isset($_GET['office']) ? $_GET['office'] : '';
-$selectedReq = isset($_GET['req']) ? intval($_GET['req']) : 0;
+$show_certificate = isset($_GET['show_certificate']) ? intval($_GET['show_certificate']) : 0;
 
-$selectedRequirement = null;
-$submission = null;
-$comments = null;
-
-// Get student's current year from database
 $current_year_result = $conn->query("SELECT chmsu_year FROM chmsu_students_master WHERE chmsu_student_id='{$_SESSION['student']}'");
 $current_student_year = '1';
 if ($current_year_result && $current_year_result->num_rows > 0) {
     $current_student_year = $current_year_result->fetch_assoc()['chmsu_year'];
 }
 
-if ($selectedReq > 0 && $selectedOffice) {
-    // FIXED: Include requirements with NULL year/section (All Years/All Sections)
-    $selectedRequirement = $conn->query("SELECT * FROM chmsu_requirements 
-                                        WHERE chmsu_id=$selectedReq 
-                                        AND chmsu_office='$selectedOffice'
-                                        AND chmsu_course='{$student['chmsu_course']}' 
-                                        AND (chmsu_year='$current_student_year' OR chmsu_year IS NULL OR chmsu_year = '')
-                                        AND (chmsu_section='{$student['chmsu_section']}' OR chmsu_section IS NULL OR chmsu_section = '')")->fetch_assoc();
-    
-    if ($selectedRequirement) {
-        $deadline_passed = $selectedRequirement['chmsu_deadline'] && strtotime($selectedRequirement['chmsu_deadline']) < time();
-        $submission = $conn->query("SELECT * FROM chmsu_submissions 
-                                   WHERE chmsu_requirement_id={$selectedRequirement['chmsu_id']} 
-                                   AND chmsu_student_id='{$_SESSION['student']}'")->fetch_assoc();
-        
-        $comments = $conn->query("SELECT * FROM chmsu_private_comments 
-                                 WHERE requirement_id={$selectedRequirement['chmsu_id']} 
-                                 AND student_id='{$_SESSION['student']}'
-                                 ORDER BY created_at DESC");
-        
-        $conn->query("UPDATE chmsu_comment_notifications SET is_read=1 
-                     WHERE requirement_id={$selectedRequirement['chmsu_id']} 
-                     AND student_id='{$_SESSION['student']}'");
+$chat_unread_count = $conn->query("SELECT SUM(student_unread) as total FROM chmsu_chat_conversations WHERE student_id='{$_SESSION['student']}'")->fetch_assoc()['total'] ?: 0;
+
+// ============================================
+// Detect the CURRENT semester (so clearance is
+// always scoped to whatever semester is active).
+// Falls back gracefully if the column doesn't exist.
+// ============================================
+$current_sem_id = 0;
+$current_sem = $conn->query("SELECT id FROM chmsu_semesters WHERE is_current = 1 LIMIT 1")->fetch_assoc();
+if ($current_sem) $current_sem_id = intval($current_sem['id']);
+
+$has_clearance_sem_col = false;
+$chk = $conn->query("SHOW COLUMNS FROM chmsu_clearance_status LIKE 'semester_id'");
+if ($chk && $chk->num_rows > 0) $has_clearance_sem_col = true;
+
+// We only filter when we can (column exists AND there's a current sem)
+$sem_filter = '';
+if ($has_clearance_sem_col && $current_sem_id > 0) {
+    $sem_filter = " AND semester_id = $current_sem_id";
+}
+
+// Get all offices with this student's clearance status for each
+// (Scoped to the CURRENT semester only — so after advancing, it resets.)
+$offices_result = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY office_name");
+$offices = [];
+$officeStatuses = [];
+$officeNotes = [];
+$totalOffices = 0;
+$approvedCount = 0;
+
+while ($office_row = $offices_result->fetch_assoc()) {
+    $office = $office_row['office_name'];
+    $offices[] = $office;
+    $totalOffices++;
+
+    $clearanceQ = $conn->query("SELECT status, note FROM chmsu_clearance_status 
+                                WHERE student_id='{$_SESSION['student']}' 
+                                AND office_name='$office' $sem_filter LIMIT 1");
+
+    if ($clearanceQ && $clearanceQ->num_rows > 0) {
+        $row = $clearanceQ->fetch_assoc();
+        if ($row['status'] == 'clear') {
+            $officeStatuses[$office] = 'Approved';
+            $approvedCount++;
+        } elseif ($row['status'] == 'unclear') {
+            $officeStatuses[$office] = 'Declined';
+        } else {
+            $officeStatuses[$office] = 'Pending';
+        }
+        $officeNotes[$office] = $row['note'];
+    } else {
+        $officeStatuses[$office] = 'Pending';
+        $officeNotes[$office] = '';
     }
 }
 
-// FIXED: List requirements including NULL year/section
-$reqs = $conn->query("SELECT * FROM chmsu_requirements 
-                     WHERE chmsu_office='$selectedOffice' 
-                     AND chmsu_course='{$student['chmsu_course']}' 
-                     AND (chmsu_year='$current_student_year' OR chmsu_year IS NULL OR chmsu_year = '')
-                     AND (chmsu_section='{$student['chmsu_section']}' OR chmsu_section IS NULL OR chmsu_section = '')
-                     ORDER BY chmsu_deadline ASC");
+$allApproved = ($approvedCount == $totalOffices && $totalOffices > 0);
+$progressPercent = ($totalOffices > 0) ? round(($approvedCount / $totalOffices) * 100) : 0;
+
+// ============================================
+// PREPARE CERTIFICATE DATA (only when viewing)
+// ============================================
+$cert_ready = false;
+if ($allApproved && $show_certificate == 1) {
+    $cert_ready = true;
+
+    // School year / semester
+    $currentSY = $conn->query("SELECT school_year FROM chmsu_school_years WHERE is_current = 1 LIMIT 1");
+    $schoolYear = $currentSY && $currentSY->num_rows > 0 ? $currentSY->fetch_assoc()['school_year'] : date('Y') . '-' . (date('Y') + 1);
+
+    $currentSem = $conn->query("SELECT semester_name FROM chmsu_semesters WHERE is_current = 1 LIMIT 1");
+    $semester = $currentSem && $currentSem->num_rows > 0 ? $currentSem->fetch_assoc()['semester_name'] : 'First Semester';
+
+    $semesterFirstChecked  = (stripos($semester, '1st') !== false || stripos($semester, 'First') !== false) ? 'checked' : '';
+    $semesterSecondChecked = (stripos($semester, '2nd') !== false || stripos($semester, 'Second') !== false) ? 'checked' : '';
+
+    // Split name
+    $fullName = $master['chmsu_full_name'] ?? '';
+    $nameParts = explode(',', $fullName);
+    $lastName = trim($nameParts[0] ?? '');
+    $firstName = isset($nameParts[1]) ? trim($nameParts[1]) : '';
+    $middleName = $master['chmsu_middle_name'] ?? '';
+}
 ?>
+
+<style>
+body { font-family: 'Times New Roman', Times, serif !important; background: #f5f5f5 !important; font-size: 14px !important; }
+.dark-sidebar {
+    width: 260px !important; background: #1b4d3e !important; color: #ffffff !important;
+    position: fixed !important; height: calc(100vh - 73px) !important;
+    overflow-y: auto !important; overflow-x: hidden !important; z-index: 100 !important;
+    font-family: 'Times New Roman', Times, serif !important; font-size: 14px !important;
+}
+.dark-sidebar .sidebar-header { padding: 20px !important; background: #0f3b2f !important; border-bottom: 1px solid #2d6a4f !important; }
+.dark-sidebar .sidebar-header h3 { font-size: 16px !important; font-weight: normal !important; font-family: 'Times New Roman', Times, serif !important; }
+.dark-sidebar .sidebar-header p { font-size: 11px !important; opacity: 0.7 !important; margin-top: 5px !important; font-family: 'Times New Roman', Times, serif !important; }
+.dark-sidebar .sidebar-menu { list-style: none !important; padding: 0 !important; margin: 0 !important; padding-bottom: 20px !important; }
+.dark-sidebar .sidebar-menu li { border-bottom: 1px solid #2d6a4f !important; }
+.dark-sidebar .sidebar-menu a {
+    display: flex !important; align-items: center !important; padding: 12px 20px !important;
+    color: #ffffff !important; text-decoration: none !important; font-size: 13px !important;
+    font-family: 'Times New Roman', Times, serif !important; transition: all 0.3s !important;
+}
+.dark-sidebar .sidebar-menu a:hover,
+.dark-sidebar .sidebar-menu a.active { background: #f1c40f !important; color: #000000 !important; }
+.dark-sidebar .sidebar-menu i { width: 18px !important; margin-right: 8px !important; font-size: 13px !important; }
+.dark-sidebar .sidebar-badge {
+    background: #e74c3c !important; color: white !important; border-radius: 50% !important;
+    padding: 1px 6px !important; font-size: 9px !important; margin-left: 5px !important;
+    animation: pulse 1.5s infinite !important; font-family: 'Times New Roman', Times, serif !important;
+}
+.main-content { margin-left: 260px !important; font-family: 'Times New Roman', Times, serif !important; font-size: 14px !important; }
+@keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.2); } 100% { transform: scale(1); } }
+@media (max-width: 768px) {
+    .dark-sidebar { width: 100% !important; position: relative !important; height: auto !important; }
+    .main-content { margin-left: 0 !important; }
+}
+
+/* ============================================ */
+/* COLOR LEGEND */
+/* ============================================ */
+.color-legend {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 10px 14px;
+    background: #ffffff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    font-size: 12px;
+    font-family: 'Times New Roman', Times, serif;
+}
+.color-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #333;
+}
+.color-legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+.legend-dot-green { background: #27ae60; }
+.legend-dot-red { background: #e74c3c; }
+.legend-dot-orange { background: #f39c12; }
+
+body.dark-mode .color-legend {
+    background: #1a1a1a;
+    border-color: #333;
+}
+body.dark-mode .color-legend-item {
+    color: #ddd;
+}
+
+/* ============================================ */
+/* FULL COLOR OFFICE BOXES */
+/* ============================================ */
+.office-boxes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 15px;
+    margin-top: 15px;
+}
+.office-box {
+    border-radius: 8px;
+    padding: 25px 18px;
+    text-align: center;
+    transition: all 0.3s;
+    color: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.office-box:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(0,0,0,0.25); }
+.office-box.approved { background: #27ae60; }
+.office-box.declined { background: #e74c3c; }
+.office-box.pending { background: #f39c12; }
+.office-box-name { font-size: 18px; font-weight: bold; margin-bottom: 8px; font-family: 'Times New Roman', Times, serif; color: white; }
+.office-box-status { font-size: 15px; font-weight: bold; font-family: 'Times New Roman', Times, serif; color: white; text-transform: uppercase; letter-spacing: 1px; }
+.office-box-note { font-size: 11px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.3); font-family: 'Times New Roman', Times, serif; color: white; }
+
+/* Certificate Banner */
+.cert-banner {
+    background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+    color: white;
+    padding: 25px 30px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 15px;
+    box-shadow: 0 4px 12px rgba(39, 174, 96, 0.3);
+}
+.cert-banner-left { display: flex; align-items: center; gap: 15px; flex: 1; min-width: 250px; }
+.cert-banner-icon { font-size: 44px; line-height: 1; }
+.cert-banner-text h2 { font-size: 22px; margin-bottom: 5px; font-weight: bold; }
+.cert-banner-text p { font-size: 14px; opacity: 0.95; }
+.cert-banner-btn {
+    padding: 12px 24px; background: white; color: #27ae60; border: none; border-radius: 6px;
+    cursor: pointer; font-size: 14px; font-weight: bold; text-decoration: none; display: inline-block;
+    font-family: 'Times New Roman', Times, serif; transition: all 0.3s;
+}
+.cert-banner-btn:hover { background: #f8f9fa; transform: scale(1.03); }
+
+body.dark-mode .office-box { color: white; }
+
+/* ============================================ */
+/* TOP-RIGHT DOWNLOAD BUTTON */
+/* ============================================ */
+.cert-top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.cert-top-bar h2 {
+    font-size: 16px;
+    margin: 0;
+}
+.cert-top-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-left: auto;
+}
+.btn-download-img {
+    padding: 8px 16px;
+    background: #27ae60;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Times New Roman', Times, serif;
+    transition: all 0.25s;
+}
+.btn-download-img:hover {
+    background: #219150;
+    transform: translateY(-1px);
+}
+.btn-download-img:disabled,
+.btn-download-img.loading {
+    background: #95a5a6;
+    cursor: not-allowed;
+    transform: none;
+}
+.btn-download-img .spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.btn-back-top {
+    padding: 8px 16px;
+    background: #7f8c8d;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: 'Times New Roman', Times, serif;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+}
+.btn-back-top:hover { background: #6c7a7d; }
+
+/* ============================================ */
+/* INLINE CERTIFICATE STYLES */
+/* ============================================ */
+.certificate-inline-wrap {
+    background: #ffffff;
+    border: 1px solid #000;
+    padding: 30px 35px;
+    position: relative;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+    margin-top: 15px;
+}
+.cert-logo-container { position: absolute; top: 25px; right: 35px; width: 80px; height: 80px; z-index: 10; }
+.cert-logo-img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; }
+
+.cert-doc-header {
+    display: flex; justify-content: space-between; border-bottom: 1px solid #000;
+    padding-bottom: 5px; margin-bottom: 25px; margin-right: 90px; font-size: 10px;
+    font-family: 'Times New Roman', Times, serif;
+}
+.cert-title {
+    font-size: 22px; font-weight: bold; text-align: center; letter-spacing: 1px;
+    text-transform: uppercase; margin: 10px 0 25px 0; font-family: 'Times New Roman', Times, serif;
+}
+.cert-student-info { width: 100%; margin-bottom: 25px; font-size: 12px; font-family: 'Times New Roman', Times, serif; }
+.cert-info-row { margin: 4px 0; display: flex; align-items: baseline; flex-wrap: wrap; }
+.cert-info-label { width: 110px; }
+.cert-info-underline { border-bottom: 1px solid #000; min-width: 250px; display: inline-block; margin-left: 10px; }
+.cert-info-underline-short { border-bottom: 1px solid #000; min-width: 150px; display: inline-block; margin-left: 10px; }
+.cert-info-underline-medium { border-bottom: 1px solid #000; min-width: 200px; display: inline-block; margin-left: 10px; }
+.cert-info-row-double { display: flex; justify-content: space-between; margin: 4px 0; }
+.cert-field-group { display: flex; align-items: baseline; flex: 1; }
+.cert-field-group .cert-info-label { width: auto; margin-right: 10px; }
+.cert-field-group .cert-info-underline { min-width: 180px; margin-left: 0; }
+.cert-certify-text {
+    font-size: 12px; line-height: 1.6; margin: 20px 0 25px 0; text-align: justify;
+    font-family: 'Times New Roman', Times, serif;
+}
+.cert-checkbox-section { margin: 20px 0; font-size: 12px; font-family: 'Times New Roman', Times, serif; }
+.cert-checkbox-line { display: flex; align-items: center; gap: 25px; flex-wrap: wrap; margin: 8px 0; }
+.cert-checkbox-item { display: inline-flex; align-items: center; gap: 5px; }
+.cert-checkbox-item input { width: 13px; height: 13px; margin: 0; }
+.cert-academic-year { display: inline-flex; align-items: center; gap: 10px; margin-left: 20px; }
+.cert-academic-year-underline { border-bottom: 1px solid #000; min-width: 120px; display: inline-block; }
+.cert-signatures-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 25px 50px; margin: 25px 0 20px 0;
+}
+.cert-signature-item { text-align: center; font-family: 'Times New Roman', Times, serif; }
+.cert-approval-text { font-size: 18px; font-weight: bold; letter-spacing: 2px; margin-bottom: 5px; }
+.cert-approval-approved { color: #27ae60; }
+.cert-approval-pending { color: #c0392b; font-size: 14px; }
+.cert-signature-line { border-bottom: 1px solid #000; width: 100%; margin: 8px 0 5px 0; }
+.cert-office-name { font-size: 12px; font-weight: normal; text-transform: uppercase; margin-top: 3px; }
+.cert-docs-section { margin: 20px 0 15px 0; font-size: 12px; font-family: 'Times New Roman', Times, serif; }
+.cert-docs-row { display: flex; gap: 30px; flex-wrap: wrap; margin-top: 5px; }
+.cert-doc-item { display: inline-flex; align-items: center; gap: 5px; }
+.cert-doc-item input { width: 13px; height: 13px; margin: 0; }
+
+body.dark-mode .certificate-inline-wrap {
+    background: #1a1a1a;
+    border-color: #444;
+    color: #fff;
+}
+body.dark-mode .cert-doc-header,
+body.dark-mode .cert-info-underline,
+body.dark-mode .cert-info-underline-short,
+body.dark-mode .cert-info-underline-medium,
+body.dark-mode .cert-academic-year-underline,
+body.dark-mode .cert-signature-line {
+    border-color: #888;
+}
+</style>
+
+<!-- html2canvas for Download as Image -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
 <div class="header">
     <div class="header-logo">
@@ -70,240 +389,297 @@ $reqs = $conn->query("SELECT * FROM chmsu_requirements
             <h3><?php echo $master['chmsu_full_name']; ?></h3>
             <p><?php echo $student['chmsu_course']; ?> <?php echo $student['chmsu_year']; ?><?php echo $student['chmsu_section']; ?></p>
         </div>
-        
+
         <ul class="sidebar-menu">
-            <li><a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=home"><i class="fas fa-home"></i> Home</a></li>
-            <li style="border-bottom: none; padding: 8px 12px; color: #dddddd; font-size: 10px;">OFFICES</li>
-            <?php
-            $offices_result = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY office_name");
-            while ($office_row = $offices_result->fetch_assoc()):
-                $office = $office_row['office_name'];
-                $statusQuery = $conn->query("SELECT s.chmsu_status FROM chmsu_submissions s JOIN chmsu_requirements r ON s.chmsu_requirement_id = r.chmsu_id WHERE r.chmsu_office = '$office' AND s.chmsu_student_id = '{$_SESSION['student']}' ORDER BY s.chmsu_id DESC LIMIT 1");
-                $statusClass = 'status-dot-pending';
-                $nameClass = '';
-                if ($statusQuery->num_rows > 0) {
-                    $status = $statusQuery->fetch_assoc()['chmsu_status'];
-                    if ($status == 'Approved') $statusClass = 'status-dot-approved';
-                    elseif ($status == 'Declined') { $statusClass = 'status-dot-declined'; $nameClass = 'rejected-name'; }
-                }
-                // FIXED: Count requirements including NULL year/section
-                $countQuery = $conn->query("SELECT COUNT(*) as c FROM chmsu_requirements WHERE chmsu_office='$office' AND chmsu_course='{$student['chmsu_course']}' AND (chmsu_year='$current_student_year' OR chmsu_year IS NULL OR chmsu_year = '') AND (chmsu_section='{$student['chmsu_section']}' OR chmsu_section IS NULL OR chmsu_section = '')");
-                $count = $countQuery->fetch_assoc()['c'];
-            ?>
+            <li><a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=home"><i class="fas fa-home"></i> Dashboard</a></li>
+            <li><a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=feed"><i class="fas fa-rss"></i> Updates Feed</a></li>
             <li>
-                <a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=office&office=<?php echo urlencode($office); ?>" class="<?php echo ($selectedOffice == $office) ? 'active' : ''; ?> <?php echo $nameClass; ?>">
-                    <span class="office-status-dot <?php echo $statusClass; ?>"></span>
-                    <span><?php echo $office; ?></span>
-                    <span class="office-count"><?php echo $count; ?></span>
+                <a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=chat">
+                    <i class="fas fa-comment-dots"></i> Messages
+                    <?php if ($chat_unread_count > 0): ?>
+                        <span class="sidebar-badge"><?php echo $chat_unread_count; ?></span>
+                    <?php endif; ?>
                 </a>
             </li>
-            <?php endwhile; ?>
+            <li><a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=office" class="active"><i class="fas fa-clipboard-check"></i> OFFICES</a></li>
             <li style="margin-top: 15px; border-top: 1px solid #2d6a4f;">
                 <a href="#" onclick="confirmLogout(); return false;"><i class="fas fa-sign-out-alt"></i> Logout</a>
             </li>
         </ul>
     </div>
-    
+
     <div class="main-content">
         <div class="info-bar">
             <div class="info-bar-item"><strong>ID:</strong> <?php echo $student['chmsu_student_id']; ?></div>
             <div class="info-bar-item"><strong>Name:</strong> <?php echo $master['chmsu_full_name']; ?></div>
             <div class="info-bar-item"><strong>Course/Year/Section:</strong> <?php echo $student['chmsu_course']; ?> <?php echo $student['chmsu_year']; ?><?php echo $student['chmsu_section']; ?></div>
         </div>
-        
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h2 style="font-size: 16px;"><?php echo $selectedOffice; ?> Requirements</h2>
-            <button class="btn btn-back btn-sm" onclick="window.location.href='<?php echo $_SERVER['PHP_SELF']; ?>?view=home'">Back to Home</button>
-        </div>
-        
-        <div class="requirements-container">
-            <div class="requirements-list">
-                <?php if ($reqs->num_rows == 0): ?>
-                    <p style="font-size: 11px; color: #666;">No requirements from this office.</p>
-                <?php else: ?>
-                    <?php while ($req = $reqs->fetch_assoc()): 
-                        $req_submission = $conn->query("SELECT * FROM chmsu_submissions WHERE chmsu_requirement_id={$req['chmsu_id']} AND chmsu_student_id='{$_SESSION['student']}'")->fetch_assoc();
-                        $is_active = ($selectedReq == $req['chmsu_id']);
-                        $unreadComments = $conn->query("SELECT COUNT(*) as c FROM chmsu_comment_notifications WHERE requirement_id={$req['chmsu_id']} AND student_id='{$_SESSION['student']}' AND is_read=0")->fetch_assoc()['c'];
-                    ?>
-                    <div class="requirement-item <?php echo $is_active ? 'active' : ''; ?>" 
-                         onclick="window.location.href='?view=office&office=<?php echo urlencode($selectedOffice); ?>&req=<?php echo $req['chmsu_id']; ?>'"
-                         style="position: relative;">
-                        <div class="requirement-header">
-                            <div>
-                                <div class="requirement-title"><?php echo $req['chmsu_title']; ?></div>
-                                <div class="requirement-meta">
-                                    <?php if ($req['chmsu_deadline']): ?>
-                                        Due: <?php echo date('M d, Y H:i', strtotime($req['chmsu_deadline'])); ?>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                            <?php if ($req_submission): ?>
-                                <span class="requirement-badge requirement-badge-<?php echo strtolower($req_submission['chmsu_status']); ?>">
-                                    <?php echo $req_submission['chmsu_status']; ?>
-                                </span>
-                            <?php endif; ?>
-                        </div>
-                        <?php if ($req['chmsu_file_path'] && file_exists($req['chmsu_file_path'])): ?>
-                        <div class="requirement-attachment" onclick="event.stopPropagation(); openFullscreenViewer('<?php echo $req['chmsu_file_path']; ?>', '<?php echo $req['chmsu_file_type']; ?>', '<?php echo $req['chmsu_file_name']; ?>')">
-                            <i class="fas <?php echo getFileIcon($req['chmsu_file_type']); ?>" style="color: <?php echo getFileColor($req['chmsu_file_type']); ?>"></i>
-                            <span><?php echo $req['chmsu_file_name']; ?></span>
-                        </div>
-                        <?php endif; ?>
-                        <?php if ($unreadComments > 0): ?>
-                            <span class="notification-dot" style="position: absolute; top: 5px; right: 5px;"></span>
-                        <?php endif; ?>
-                    </div>
-                    <?php endwhile; ?>
-                <?php endif; ?>
+
+        <?php if ($cert_ready): ?>
+            <!-- ============================================ -->
+            <!-- INLINE CERTIFICATE VIEW -->
+            <!-- ============================================ -->
+            <div class="cert-top-bar">
+                <h2><i class="fas fa-certificate"></i> Certificate of Completion</h2>
+                <div class="cert-top-actions">
+                    <button class="btn-download-img" id="downloadImgBtn" onclick="downloadCertificateAsImage()">
+                        <i class="fas fa-download"></i> Download as Image
+                    </button>
+                    <a href="<?php echo $_SERVER['PHP_SELF']; ?>?view=office" class="btn-back-top">
+                        <i class="fas fa-arrow-left"></i> Back to Clearance
+                    </a>
+                </div>
             </div>
-            
-            <?php if ($selectedRequirement): ?>
-            <div class="submission-panel">
-                <div class="panel-header">
-                    <h3><?php echo $selectedRequirement['chmsu_title']; ?></h3>
-                    <div class="deadline">
-                        <?php if ($selectedRequirement['chmsu_deadline']): ?>
-                            <span class="deadline-box <?php echo $deadline_passed ? 'deadline-passed' : ''; ?>">
-                                <i class="far fa-clock"></i> Due: <?php echo date('M d, Y H:i', strtotime($selectedRequirement['chmsu_deadline'])); ?>
-                            </span>
+
+            <div class="certificate-inline-wrap" id="certificateToDownload">
+                <div class="cert-logo-container">
+                    <img src="https://tse4.mm.bing.net/th/id/OIP._MzqqLuZngO_bDcppKr1wAHaHa?pid=Api&h=220&P=0" alt="CHMSU Logo" class="cert-logo-img" crossorigin="anonymous">
+                </div>
+
+                <div class="cert-doc-header">
+                    <span>Document Code: F.15-RO-CHMSU</span>
+                    <span>Revision No.: 0</span>
+                    <span>Effective Date: May 6, 2024</span>
+                    <span>Page: 1 of 1</span>
+                </div>
+
+                <div class="cert-title">STUDENT'S CLEARANCE</div>
+
+                <div class="cert-student-info">
+                    <div class="cert-info-row">
+                        <span class="cert-info-label">ID Number:</span>
+                        <span class="cert-info-underline"><?php echo htmlspecialchars($student['chmsu_student_id']); ?></span>
+                    </div>
+                    <div class="cert-info-row-double">
+                        <div class="cert-field-group">
+                            <span class="cert-info-label">Last Name</span>
+                            <span class="cert-info-underline"><?php echo htmlspecialchars($lastName); ?></span>
+                        </div>
+                        <div class="cert-field-group">
+                            <span class="cert-info-label">First Name</span>
+                            <span class="cert-info-underline"><?php echo htmlspecialchars($firstName); ?></span>
+                        </div>
+                    </div>
+                    <div class="cert-info-row-double">
+                        <div class="cert-field-group">
+                            <span class="cert-info-label">Middle Name</span>
+                            <span class="cert-info-underline"><?php echo htmlspecialchars($middleName); ?></span>
+                        </div>
+                        <div class="cert-field-group">
+                            <span class="cert-info-label">Ext.</span>
+                            <span class="cert-info-underline-short"></span>
+                        </div>
+                    </div>
+                    <div class="cert-info-row-double">
+                        <div class="cert-field-group">
+                            <span class="cert-info-label">Signature</span>
+                            <span class="cert-info-underline-medium"></span>
+                        </div>
+                        <div class="cert-field-group">
+                            <span class="cert-info-label"></span>
+                            <span></span>
+                        </div>
+                    </div>
+                    <div class="cert-info-row-double">
+                        <div class="cert-field-group">
+                            <span class="cert-info-label">Course/Year/Section</span>
+                            <span class="cert-info-underline-medium"><?php echo htmlspecialchars($student['chmsu_course']); ?> <?php echo $student['chmsu_year']; ?> - <?php echo htmlspecialchars($student['chmsu_section']); ?></span>
+                        </div>
+                        <div class="cert-field-group">
+                            <span class="cert-info-label">Major</span>
+                            <span class="cert-info-underline-short"></span>
+                        </div>
+                    </div>
+                    <div class="cert-info-row">
+                        <span class="cert-info-label">Contact number</span>
+                        <span class="cert-info-underline-medium"></span>
+                    </div>
+                </div>
+
+                <div class="cert-certify-text">
+                    This is to certify that the student is cleared of money accountability and property responsibility for the concerned personnel of the University.
+                </div>
+
+                <div class="cert-checkbox-section">
+                    <div class="cert-checkbox-line">
+                        <div class="cert-checkbox-item"><input type="checkbox" <?php echo $semesterFirstChecked; ?> disabled> 1st</div>
+                        <div class="cert-checkbox-item"><input type="checkbox" <?php echo $semesterSecondChecked; ?> disabled> 2nd</div>
+                        <div class="cert-checkbox-item"><input type="checkbox" disabled> Summer</div>
+                        <div class="cert-academic-year">
+                            <span>Semester, Academic Year</span>
+                            <span class="cert-academic-year-underline"><?php echo htmlspecialchars($schoolYear); ?></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="cert-signatures-grid">
+                    <?php foreach ($offices as $officeName):
+                        $isApproved = ($officeStatuses[$officeName] === 'Approved');
+                    ?>
+                    <div class="cert-signature-item">
+                        <?php if ($isApproved): ?>
+                            <div class="cert-approval-text cert-approval-approved">APPROVED</div>
+                        <?php else: ?>
+                            <div class="cert-approval-text cert-approval-pending">PENDING</div>
                         <?php endif; ?>
+                        <div class="cert-signature-line"></div>
+                        <div class="cert-office-name"><?php echo htmlspecialchars($officeName); ?></div>
+                    </div>
+                    <?php endforeach; ?>
+
+                    <div class="cert-signature-item">
+                        <?php if ($allApproved): ?>
+                            <div class="cert-approval-text cert-approval-approved">COMPLETED</div>
+                        <?php else: ?>
+                            <div class="cert-approval-text cert-approval-pending">IN PROGRESS</div>
+                        <?php endif; ?>
+                        <div class="cert-signature-line"></div>
+                        <div class="cert-office-name">STATUS</div>
                     </div>
                 </div>
-                
-                <div class="panel-content">
-                    <?php if ($selectedRequirement['chmsu_description']): ?>
-                    <div style="background: #f8f9fa; padding: 8px; border-radius: 4px; margin-bottom: 12px; font-size: 11px;">
-                        <?php echo nl2br($selectedRequirement['chmsu_description']); ?>
-                    </div>
-                    <?php endif; ?>
-                    
-                    <?php if ($selectedRequirement['chmsu_file_path'] && file_exists($selectedRequirement['chmsu_file_path'])): ?>
-                    <div class="attachment-list">
-                        <h4>Attachments</h4>
-                        <div class="attachment-item" onclick="openFullscreenViewer('<?php echo $selectedRequirement['chmsu_file_path']; ?>', '<?php echo $selectedRequirement['chmsu_file_type']; ?>', '<?php echo $selectedRequirement['chmsu_file_name']; ?>')">
-                            <div class="attachment-icon" style="color: <?php echo getFileColor($selectedRequirement['chmsu_file_type']); ?>">
-                                <i class="fas <?php echo getFileIcon($selectedRequirement['chmsu_file_type']); ?>"></i>
-                            </div>
-                            <div>
-                                <div class="attachment-name"><?php echo $selectedRequirement['chmsu_file_name']; ?></div>
-                                <div class="attachment-size"><?php echo file_exists($selectedRequirement['chmsu_file_path']) ? formatFileSize(filesize($selectedRequirement['chmsu_file_path'])) : ''; ?></div>
-                            </div>
-                        </div>
-                    </div>
-                    <?php endif; ?>
-                    
-                    <?php if ($submission): ?>
-                        <div class="submitted-work">
-                            <h4>Your work</h4>
-                            <?php if ($submission['chmsu_file_path'] && file_exists($submission['chmsu_file_path'])): ?>
-                            <div class="submitted-file" onclick="openFullscreenViewer('<?php echo $submission['chmsu_file_path']; ?>', '<?php echo $submission['chmsu_file_type']; ?>', '<?php echo $submission['chmsu_file_name']; ?>')">
-                                <i class="fas <?php echo getFileIcon($submission['chmsu_file_type']); ?>" style="color: <?php echo getFileColor($submission['chmsu_file_type']); ?>"></i>
-                                <span><?php echo $submission['chmsu_file_name']; ?></span>
-                            </div>
-                            <?php endif; ?>
-                            <?php if ($submission['chmsu_link']): ?>
-                            <a href="<?php echo $submission['chmsu_link']; ?>" target="_blank" class="submitted-link">
-                                <i class="fas fa-link"></i>
-                                <span><?php echo $submission['chmsu_link']; ?></span>
-                            </a>
-                            <?php endif; ?>
-                            <?php if ($submission['chmsu_text']): ?>
-                            <div class="submitted-text"><?php echo nl2br($submission['chmsu_text']); ?></div>
-                            <?php endif; ?>
-                            <div class="status-section">
-                                <span class="status-badge status-<?php echo strtolower($submission['chmsu_status']); ?>">
-                                    <?php echo $submission['chmsu_status']; ?>
-                                </span>
-                                <?php if ($submission['chmsu_status'] == 'Submitted' && !$deadline_passed): ?>
-                                <button class="unsubmit-btn" onclick="confirmUnsubmit(<?php echo $submission['chmsu_id']; ?>)">Unsubmit</button>
-                                <?php endif; ?>
-                            </div>
-                            <?php if ($submission['chmsu_status'] == 'Declined' && !empty($submission['chmsu_reject_reason'])): ?>
-                            <div class="rejection-reason-box">
-                                <strong><i class="fas fa-exclamation-triangle"></i> Reason for Declination:</strong>
-                                <?php echo $submission['chmsu_reject_reason']; ?>
-                            </div>
-                            <?php endif; ?>
-                        </div>
-                    <?php elseif (!$deadline_passed): ?>
-                        <div>
-                            <h4>Your work</h4>
-                            <div class="submission-tabs">
-                                <span class="submission-tab active" onclick="showSubmissionTab('file')">File</span>
-                                <span class="submission-tab" onclick="showSubmissionTab('link')">Link</span>
-                                <span class="submission-tab" onclick="showSubmissionTab('text')">Text</span>
-                            </div>
-                            <form method="POST" enctype="multipart/form-data" onsubmit="return validateSubmitForm()">
-                                <input type="hidden" name="action" value="submit_req">
-                                <input type="hidden" name="req_id" value="<?php echo $selectedRequirement['chmsu_id']; ?>">
-                                <div id="file-tab" class="submission-tab-content">
-                                    <div class="file-upload-area" onclick="document.getElementById('file-input').click()">
-                                        <i class="fas fa-cloud-upload-alt"></i>
-                                        <p>Click to upload</p>
-                                        <p style="font-size: 8px; color: #999;">PDF, DOC, XLS, PPT, Images (Max 10MB)</p>
-                                        <input type="file" id="file-input" name="file" style="display: none;" accept=".pdf,.jpg,.jpeg,.png,.gif,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" onchange="handleFileSelect(this)">
-                                    </div>
-                                    <div id="file-preview" class="file-preview"></div>
-                                </div>
-                                <div id="link-tab" class="submission-tab-content hidden">
-                                    <div class="link-input"><input type="url" name="link" id="link-input" placeholder="https://example.com"></div>
-                                </div>
-                                <div id="text-tab" class="submission-tab-content hidden">
-                                    <div class="text-input"><textarea name="text" id="text-input" placeholder="Type your submission here..."></textarea></div>
-                                </div>
-                                <button type="submit" class="submit-btn">Submit</button>
-                            </form>
-                        </div>
-                    <?php else: ?>
-                        <div class="deadline-box deadline-passed" style="padding: 8px; text-align: center;">
-                            <i class="fas fa-lock"></i> Deadline passed
-                        </div>
-                    <?php endif; ?>
-                    
-                    <div class="comments-section" id="commentsSection">
-                        <h4>
-                            Private comments
-                            <button class="comment-toggle-btn" onclick="toggleComments()">
-                                <i class="fas fa-chevron-down"></i> Toggle Comments
-                            </button>
-                            <?php 
-                            $unreadCount = $conn->query("SELECT COUNT(*) as c FROM chmsu_comment_notifications WHERE requirement_id={$selectedRequirement['chmsu_id']} AND student_id='{$_SESSION['student']}' AND is_read=0")->fetch_assoc()['c'];
-                            if ($unreadCount > 0): 
-                            ?>
-                            <span class="comment-count" style="position: relative; top: auto; right: auto; display: inline-block; margin-left: 5px;"><?php echo $unreadCount; ?></span>
-                            <?php endif; ?>
-                        </h4>
-                        <div class="comments-list">
-                            <?php if ($comments && $comments->num_rows > 0): ?>
-                                <?php while ($comment = $comments->fetch_assoc()): 
-                                    $isUnread = $comment['is_read'] == 0;
-                                ?>
-                                <div class="comment-item <?php echo $isUnread ? 'unread' : ''; ?>">
-                                    <?php if ($comment['created_by'] == 'office'): ?>
-                                    <span class="comment-badge" style="display: inline-block; background: #1b4d3e; color: white; padding: 1px 4px; border-radius: 2px; font-size: 8px; margin-bottom: 3px;"><?php echo $selectedOffice; ?></span>
-                                    <?php endif; ?>
-                                    <div class="comment-header">
-                                        <span class="comment-author"><?php echo $comment['created_by'] == 'student' ? 'You' : $selectedOffice; ?></span>
-                                        <span class="comment-date"><?php echo date('M d, Y', strtotime($comment['created_at'])); ?></span>
-                                    </div>
-                                    <div class="comment-text"><?php echo nl2br($comment['comment']); ?></div>
-                                </div>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <p style="font-size: 10px; color: #666; text-align: center; padding: 10px;">No comments yet</p>
-                            <?php endif; ?>
-                        </div>
-                        <form method="POST" class="comment-input">
-                            <input type="hidden" name="action" value="add_private_comment">
-                            <input type="hidden" name="req_id" value="<?php echo $selectedRequirement['chmsu_id']; ?>">
-                            <input type="text" name="comment" placeholder="Add a private comment..." required>
-                            <button type="submit">Post</button>
-                        </form>
+
+                <div class="cert-docs-section">
+                    <div class="cert-docs-row">
+                        <div class="cert-doc-item"><input type="checkbox" disabled> SHS SF10</div>
+                        <div class="cert-doc-item"><input type="checkbox" disabled> JOTR</div>
+                        <div class="cert-doc-item"><input type="checkbox" disabled> PSA Birth</div>
                     </div>
                 </div>
+            </div>
+
+        <?php else: ?>
+            <!-- ============================================ -->
+            <!-- DEFAULT CLEARANCE STATUS VIEW -->
+            <!-- ============================================ -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="font-size: 16px;"><i class="fas fa-clipboard-check"></i> My Clearance Status</h2>
+                <button class="btn btn-back btn-sm" onclick="window.location.href='<?php echo $_SERVER['PHP_SELF']; ?>?view=home'" style="padding: 6px 12px; background: #7f8c8d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px;">
+                    <i class="fas fa-arrow-left"></i> Back to Dashboard
+                </button>
+            </div>
+
+            <div style="background: white; padding: 15px 20px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="font-size: 13px; color: #1b4d3e;"><strong><i class="fas fa-chart-line"></i> Overall Progress</strong></span>
+                    <span style="font-size: 13px;"><?php echo $approvedCount; ?> / <?php echo $totalOffices; ?> Approved (<?php echo $progressPercent; ?>%)</span>
+                </div>
+                <div style="width: 100%; height: 10px; background: #e0e0e0; border-radius: 5px; overflow: hidden;">
+                    <div style="width: <?php echo $progressPercent; ?>%; height: 100%; background: #27ae60; border-radius: 5px;"></div>
+                </div>
+            </div>
+
+            <?php if ($allApproved): ?>
+            <div class="cert-banner">
+                <div class="cert-banner-left">
+                    <div class="cert-banner-icon">🎉</div>
+                    <div class="cert-banner-text">
+                        <h2>You are fully cleared!</h2>
+                        <p>All offices have approved your clearance.</p>
+                    </div>
+                </div>
+                <a href="?view=office&show_certificate=1" class="cert-banner-btn">
+                    <i class="fas fa-certificate"></i> View Certificate of Completion
+                </a>
             </div>
             <?php endif; ?>
-        </div>
+
+            <!-- ============================================ -->
+            <!-- COLOR LEGEND -->
+            <!-- ============================================ -->
+            <div class="color-legend">
+                <span class="color-legend-item">
+                    <span class="color-legend-dot legend-dot-green"></span> Approved
+                </span>
+                <span class="color-legend-item">
+                    <span class="color-legend-dot legend-dot-red"></span> Declined
+                </span>
+                <span class="color-legend-item">
+                    <span class="color-legend-dot legend-dot-orange"></span> Pending
+                </span>
+            </div>
+
+            <div class="office-boxes-grid">
+                <?php foreach ($offices as $office):
+                    $status = $officeStatuses[$office];
+                    $statusClass = strtolower($status);
+                    $note = $officeNotes[$office];
+
+                    $office_link = $allApproved
+                        ? "?view=office&show_certificate=1"
+                        : "javascript:void(0);";
+                ?>
+                <div class="office-box <?php echo $statusClass; ?>" 
+                     onclick="window.location.href='<?php echo $office_link; ?>'"
+                     style="cursor: <?php echo $allApproved ? 'pointer' : 'default'; ?>;">
+                    <div class="office-box-name"><?php echo htmlspecialchars($office); ?></div>
+                    <div class="office-box-status"><?php echo $status; ?></div>
+                    <?php if ($status == 'Declined' && !empty($note)): ?>
+                        <div class="office-box-note"><strong>Reason:</strong> <?php echo htmlspecialchars($note); ?></div>
+                    <?php endif; ?>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
     </div>
 </div>
+
+<script>
+// ============================================
+// DOWNLOAD CERTIFICATE AS IMAGE
+// ============================================
+function downloadCertificateAsImage() {
+    const cert = document.getElementById('certificateToDownload');
+    const btn = document.getElementById('downloadImgBtn');
+
+    if (!cert) {
+        alert('Certificate not found.');
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.innerHTML = '<span class="spinner"></span> Preparing...';
+    }
+
+    setTimeout(function () {
+        html2canvas(cert, {
+            scale: 2,
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor: '#ffffff',
+            logging: false,
+            windowWidth: cert.scrollWidth,
+            windowHeight: cert.scrollHeight
+        }).then(function (canvas) {
+            const studentId = "<?php echo addslashes($student['chmsu_student_id']); ?>";
+            const fileName = 'CHMSU_Clearance_' + studentId + '_' + Date.now() + '.png';
+
+            canvas.toBlob(function (blob) {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    btn.innerHTML = '<i class="fas fa-download"></i> Download as Image';
+                }
+            }, 'image/png');
+        }).catch(function (err) {
+            console.error('html2canvas error:', err);
+            alert('Could not generate image. Please try again.');
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.innerHTML = '<i class="fas fa-download"></i> Download as Image';
+            }
+        });
+    }, 250);
+}
+</script>

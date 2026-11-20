@@ -309,7 +309,7 @@ if(isset($_POST['action']) && $_POST['action'] == 'promote_students') {
 
 <div class="dashboard-wrapper">
     <!-- ============================================ -->
-    <!-- REGISTRAR SIDEBAR - UPDATED TO MATCH DASHBOARD -->
+    <!-- REGISTRAR SIDEBAR - UNIFORM WITH NEW LINKS   -->
     <!-- ============================================ -->
     <div class="registrar-sidebar">
         <div class="sidebar-header">
@@ -320,9 +320,12 @@ if(isset($_POST['action']) && $_POST['action'] == 'promote_students') {
             <li><a href="?section=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
             <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
+            <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
             <li><a href="?section=archived"><i class="fas fa-archive"></i> Archive</a></li>
             <li><a href="?section=promotion" class="active"><i class="fas fa-arrow-up"></i> Student Promotion</a></li>
+            <li><a href="?section=note"><i class="fas fa-rss"></i> Feed Updates</a></li>
+            <li><a href="?section=chat"><i class="fas fa-comment-dots"></i> Messages</a></li>
             <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
                 <a href="#" onclick="confirmLogout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
             </li>

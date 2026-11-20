@@ -1,4 +1,89 @@
 <?php
+// ============================================
+// ADMIN-FLAGGED PASSWORD RESET — LOGIN FLOW
+// ============================================
+$showResetForm      = false;
+$pendingStudentId   = '';
+$pendingStudentName = '';
+$resetFlowError     = '';
+
+// ---------- STEP 1: student submits ID → check for pending reset ----------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['check_pending_reset']) && !empty($_POST['username'])) {
+    $sid = sanitize($_POST['username']);
+    $sid_esc = $conn->real_escape_string($sid);
+    
+    // Check if this student is flagged for reset
+    $pending = $conn->query("
+        SELECT pr.id, s.chmsu_full_name
+        FROM chmsu_password_resets pr
+        JOIN chmsu_students_master s ON s.chmsu_student_id = pr.student_id
+        WHERE pr.student_id = '$sid_esc' AND pr.is_used = 0
+        ORDER BY pr.id DESC LIMIT 1
+    ")->fetch_assoc();
+
+    if ($pending) {
+        // FLAG FOUND! Stop login, show reset form.
+        unset($_POST['action']); // Disable normal login processing
+        unset($_POST['login']);  // Disable normal login processing
+        $showResetForm      = true;
+        $pendingStudentId   = $sid;
+        $pendingStudentName = $pending['chmsu_full_name'];
+    }
+}
+
+// ---------- STEP 2: student submits new password ----------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_password_reset'])) {
+    $sid     = sanitize($_POST['pending_student_id'] ?? '');
+    $newPass = $_POST['new_password'] ?? '';
+    $confirm = $_POST['confirm_password'] ?? '';
+    $sid_esc = $conn->real_escape_string($sid);
+
+    $pending = $conn->query("SELECT id FROM chmsu_password_resets
+                             WHERE student_id = '$sid_esc' AND is_used = 0
+                             ORDER BY id DESC LIMIT 1")->fetch_assoc();
+
+    if (!$pending) {
+        $resetFlowError = "Password reset session expired. Please log in again.";
+    } elseif (strlen($newPass) < 8) {
+        $resetFlowError     = "Password must be at least 8 characters.";
+        $showResetForm      = true;
+        $pendingStudentId   = $sid;
+    } elseif (!preg_match('/[A-Za-z]/', $newPass) || !preg_match('/[0-9]/', $newPass)) {
+        $resetFlowError     = "Password must contain both letters and numbers.";
+        $showResetForm      = true;
+        $pendingStudentId   = $sid;
+    } elseif ($newPass !== $confirm) {
+        $resetFlowError     = "Passwords do not match.";
+        $showResetForm      = true;
+        $pendingStudentId   = $sid;
+    } else {
+        $hashed = password_hash($newPass, PASSWORD_DEFAULT);
+        $h_esc  = $conn->real_escape_string($hashed);
+
+        $conn->query("UPDATE chmsu_user_accounts
+                      SET chmsu_password = '$h_esc', is_active = 1
+                      WHERE chmsu_student_id = '$sid_esc'");
+        $conn->query("UPDATE chmsu_password_resets
+                      SET is_used = 1
+                      WHERE student_id = '$sid_esc' AND is_used = 0");
+
+        logActivity($conn, $sid, 'student', 'Logged in (after admin password reset)');
+        $_SESSION['student'] = $sid;
+        header("Location: " . $_SERVER['PHP_SELF'] . "?view=home");
+        exit;
+    }
+}
+
+// Re-fetch name if validation error needs to display it again
+if ($showResetForm && $pendingStudentId !== '' && $pendingStudentName === '') {
+    $sid_esc = $conn->real_escape_string($pendingStudentId);
+    $nm = $conn->query("SELECT chmsu_full_name FROM chmsu_students_master
+                        WHERE chmsu_student_id = '$sid_esc'")->fetch_assoc();
+    if ($nm) $pendingStudentName = $nm['chmsu_full_name'];
+}
+?>
+
+<?php
 // Check if admin already exists
 $adminExists = $conn->query("SELECT * FROM chmsu_admin_users")->num_rows > 0;
 
@@ -327,7 +412,7 @@ $availableOffices = $conn->query("SELECT o.office_name FROM chmsu_offices o
 <body>
 
 <?php if(isset($_GET['register'])): ?>
-    <!-- REGISTRATION VIEW -->
+    <!-- REGISTRATION VIEW (unchanged) -->
     <div class="split-container">
         <div class="left-side">
             <div class="logo-container">
@@ -435,41 +520,101 @@ $availableOffices = $conn->query("SELECT o.office_name FROM chmsu_offices o
         
         <div class="right-side">
             <div class="form-container">
-                <div class="form-title">Login</div>
-                
-                <!-- Notifications -->
-                <?php if(isset($error) && $error != '' && $error != 'password_mismatch' && $error != 'registration_success'): ?>
-                    <div class="notification notification-error">
-                        <i class="fas fa-exclamation-circle"></i>
-                        <span><?php echo htmlspecialchars($error); ?></span>
-                        <span class="close-notification" onclick="this.parentElement.style.display='none'">&times;</span>
+
+                <?php if ($showResetForm): ?>
+                    <!-- ================================================= -->
+                    <!-- STEP 2: CREATE NEW PASSWORD (replaces login form) -->
+                    <!-- ================================================= -->
+                    <div class="form-title">Create New Password</div>
+
+                    <p style="text-align:center; color:#666; font-size:13px; margin-bottom:16px;">
+                        <?php echo htmlspecialchars($pendingStudentName ?: 'Student'); ?>
+                    </p>
+
+                    <?php if ($resetFlowError): ?>
+                        <div class="notification notification-error">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <span><?php echo htmlspecialchars($resetFlowError); ?></span>
+                        </div>
+                    <?php endif; ?>
+
+                    <form method="POST" action="" onsubmit="return validateResetForm()">
+                        <input type="hidden" name="complete_password_reset" value="1">
+                        <input type="hidden" name="pending_student_id" value="<?php echo htmlspecialchars($pendingStudentId); ?>">
+
+                        <div class="password-wrapper">
+                            <input type="text"
+                                   value="<?php echo htmlspecialchars($pendingStudentId); ?>"
+                                   readonly
+                                   style="background:#f0f2f5; cursor:not-allowed; color:#333;"
+                                   placeholder="Student ID">
+                        </div>
+
+                        <div class="password-wrapper">
+                            <input type="password" name="new_password" id="resetNewPassword"
+                                   minlength="8" required
+                                   placeholder="New Password (min 8 chars, letters &amp; numbers)"
+                                   autocomplete="new-password">
+                            <i class="fas fa-eye toggle-password" onclick="togglePassword('resetNewPassword', this)"></i>
+                        </div>
+
+                        <div class="password-wrapper">
+                            <input type="password" name="confirm_password" id="resetConfirmPassword"
+                                   minlength="8" required
+                                   placeholder="Confirm New Password"
+                                   autocomplete="new-password">
+                            <i class="fas fa-eye toggle-password" onclick="togglePassword('resetConfirmPassword', this)"></i>
+                        </div>
+
+                        <small class="hint-text">Must be at least 8 characters with both letters and numbers.</small>
+
+                        <button type="submit">Set Password &amp; Log In</button>
+                    </form>
+
+                <?php else: ?>
+                    <!-- ================================================= -->
+                    <!-- STEP 1: NORMAL LOGIN FORM (existing, unchanged)    -->
+                    <!-- ================================================= -->
+                    <div class="form-title">Login</div>
+                    
+                    <!-- Notifications -->
+                    <?php if(isset($error) && $error != '' && $error != 'password_mismatch' && $error != 'registration_success'): ?>
+                        <div class="notification notification-error">
+                            <i class="fas fa-exclamation-circle"></i>
+                            <span><?php echo htmlspecialchars($error); ?></span>
+                            <span class="close-notification" onclick="this.parentElement.style.display='none'">&times;</span>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <?php if(isset($success) && $success != ''): ?>
+                        <div class="notification notification-success">
+                            <i class="fas fa-check-circle"></i>
+                            <span><?php echo htmlspecialchars($success); ?></span>
+                            <span class="close-notification" onclick="this.parentElement.style.display='none'">&times;</span>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <form method="POST" action="">
+                        <input type="hidden" name="action" value="unified_login">
+                        <!-- NEW: triggers the pending-reset detection -->
+                        <input type="hidden" name="check_pending_reset" value="1">
+
+                        <div class="password-wrapper">
+                            <input type="text" name="username" placeholder="Username / Student ID" required>
+                        </div>
+                        <div class="password-wrapper">
+                            <input type="password" name="password" id="loginPassword" placeholder="Password" required>
+                            <i class="fas fa-eye toggle-password" onclick="togglePassword('loginPassword', this)"></i>
+                        </div>
+                        <button type="submit" name="login">Login</button>
+                    </form>
+                    
+                    <div class="register-link">
+                        <p>No account yet?</p>
+                        <a href="?page=login&register=1">Create Account First</a>
                     </div>
                 <?php endif; ?>
-                
-                <?php if(isset($success) && $success != ''): ?>
-                    <div class="notification notification-success">
-                        <i class="fas fa-check-circle"></i>
-                        <span><?php echo htmlspecialchars($success); ?></span>
-                        <span class="close-notification" onclick="this.parentElement.style.display='none'">&times;</span>
-                    </div>
-                <?php endif; ?>
-                
-                <form method="POST" action="">
-                    <input type="hidden" name="action" value="unified_login">
-                    <div class="password-wrapper">
-                        <input type="text" name="username" placeholder="Username / Student ID" required>
-                    </div>
-                    <div class="password-wrapper">
-                        <input type="password" name="password" id="loginPassword" placeholder="Password" required>
-                        <i class="fas fa-eye toggle-password" onclick="togglePassword('loginPassword', this)"></i>
-                    </div>
-                    <button type="submit" name="login">Login</button>
-                </form>
-                
-                <div class="register-link">
-                    <p>No account yet?</p>
-                    <a href="?page=login&register=1">Create Account First</a>
-                </div>
+
             </div>
         </div>
     </div>
@@ -558,6 +703,24 @@ $availableOffices = $conn->query("SELECT o.office_name FROM chmsu_offices o
         }
         
         document.getElementById('registerForm').appendChild(usernameField);
+        return true;
+    }
+
+    function validateResetForm() {
+        var p1 = document.getElementById('resetNewPassword').value;
+        var p2 = document.getElementById('resetConfirmPassword').value;
+        if (p1.length < 8) {
+            alert('Password must be at least 8 characters.');
+            return false;
+        }
+        if (!/[A-Za-z]/.test(p1) || !/[0-9]/.test(p1)) {
+            alert('Password must contain both letters and numbers.');
+            return false;
+        }
+        if (p1 !== p2) {
+            alert('Passwords do not match.');
+            return false;
+        }
         return true;
     }
     

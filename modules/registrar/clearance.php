@@ -6,6 +6,25 @@ $clearance_filter_section = isset($_GET['clearance_section']) ? $_GET['clearance
 $storage_used = getTotalUploadSize();
 $storage_percent = min(($storage_used / (100 * 1024 * 1024)) * 100, 100);
 $currentSection = 'clearance';
+
+// ============================================
+// DETECT CURRENT SEMESTER
+// ============================================
+$current_sem_row = $conn->query("SELECT * FROM chmsu_semesters WHERE is_current = 1 LIMIT 1")->fetch_assoc();
+$current_sem_id = $current_sem_row ? intval($current_sem_row['id']) : 0;
+$current_sem_name = $current_sem_row ? $current_sem_row['semester_name'] : '—';
+
+$current_sy_label = '—';
+if ($current_sem_row && !empty($current_sem_row['school_year_id'])) {
+    $syR = $conn->query("SELECT school_year FROM chmsu_school_years WHERE id = " . intval($current_sem_row['school_year_id']) . " LIMIT 1")->fetch_assoc();
+    if ($syR) $current_sy_label = $syR['school_year'];
+}
+
+// Semester clause for filtering clearance status
+$sem_clause = "";
+if ($current_sem_id > 0) {
+    $sem_clause = " AND cs.semester_id = $current_sem_id ";
+}
 ?>
 
 <!DOCTYPE html>
@@ -149,6 +168,26 @@ $currentSection = 'clearance';
         .error { background: #f8d7da; color: #721c24; padding: 10px; margin-bottom: 15px; border-left: 3px solid #e74c3c; }
         .success { background: #d4edda; color: #155724; padding: 10px; margin-bottom: 15px; border-left: 3px solid #27ae60; }
         
+        /* Active Semester Banner */
+        .active-sem-banner {
+            background: linear-gradient(135deg, #1b4d3e 0%, #2d6a4f 100%);
+            color: white;
+            padding: 14px 22px;
+            border-radius: 8px;
+            margin-bottom: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            box-shadow: 0 3px 10px rgba(27,77,62,0.25);
+        }
+        .active-sem-banner-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .active-sem-banner-icon { font-size: 24px; line-height: 1; opacity: 0.9; }
+        .active-sem-banner-text { display: flex; flex-direction: column; gap: 3px; }
+        .active-sem-banner-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.75; font-weight: bold; }
+        .active-sem-banner-value { font-size: 16px; font-weight: bold; letter-spacing: 0.3px; }
+        
         body.dark-mode { background: #0a0a0a; }
         body.dark-mode .main-content { background: #0a0a0a; }
         body.dark-mode .dashboard-header-bar,
@@ -181,20 +220,23 @@ $currentSection = 'clearance';
 
 <div class="dashboard-wrapper">
     <!-- ============================================ -->
-    <!-- REGISTRAR SIDEBAR - UPDATED TO MATCH DASHBOARD -->
+    <!-- REGISTRAR SIDEBAR -->
     <!-- ============================================ -->
     <div class="registrar-sidebar">
         <div class="sidebar-header">
-            <h3>Registrar Portal</h3>
-            <p>Student Records Management</p>
+            <h3>Clearance Management</h3>
+            <p>Registrar Office</p>
         </div>
         <ul class="sidebar-menu">
             <li><a href="?section=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
             <li><a href="?section=clearance" class="active"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
+            <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
             <li><a href="?section=archived"><i class="fas fa-archive"></i> Archive</a></li>
             <li><a href="?section=promotion"><i class="fas fa-arrow-up"></i> Student Promotion</a></li>
+            <li><a href="?section=note"><i class="fas fa-rss"></i> Feed Updates</a></li>
+            <li><a href="?section=chat"><i class="fas fa-comment-dots"></i> Messages</a></li>
             <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
                 <a href="#" onclick="confirmLogout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
             </li>
@@ -206,9 +248,6 @@ $currentSection = 'clearance';
             </div>
         </div>
     </div>
-    <!-- ============================================ -->
-    <!-- END OF SIDEBAR                               -->
-    <!-- ============================================ -->
     
     <div class="main-content">
         <div class="dashboard-header-bar">
@@ -218,6 +257,20 @@ $currentSection = 'clearance';
         
         <?php if ($error): ?><div class="error"><?php echo $error; ?></div><?php endif; ?>
         <?php if ($success): ?><div class="success"><?php echo $success; ?></div><?php endif; ?>
+        
+        <div class="active-sem-banner">
+            <div class="active-sem-banner-left">
+                <div class="active-sem-banner-icon"><i class="fas fa-calendar-check"></i></div>
+                <div class="active-sem-banner-text">
+                    <span class="active-sem-banner-label">Currently Active</span>
+                    <span class="active-sem-banner-value">
+                        <?php echo htmlspecialchars($current_sy_label); ?>
+                        &nbsp;·&nbsp;
+                        <?php echo htmlspecialchars($current_sem_name); ?>
+                    </span>
+                </div>
+            </div>
+        </div>
         
         <div class="toggle-buttons">
             <button class="btn-toggle" onclick="showClearanceStatus('completed')">Complete</button>
@@ -272,25 +325,26 @@ $currentSection = 'clearance';
                 if($clearance_filter_section) $where_conditions[] = "m.chmsu_section='$clearance_filter_section'";
                 $where_sql = !empty($where_conditions) ? "AND " . implode(" AND ", $where_conditions) : "";
                 
-                $completed = $conn->query("SELECT s.chmsu_student_id, u.chmsu_name, m.chmsu_year, m.chmsu_section,
-                                          (SELECT COUNT(DISTINCT r.chmsu_office) 
-                                           FROM chmsu_submissions s2
-                                           JOIN chmsu_requirements r ON s2.chmsu_requirement_id = r.chmsu_id
-                                           WHERE s2.chmsu_student_id = s.chmsu_student_id 
-                                           AND s2.chmsu_status = 'Approved') as approved_count
-                                          FROM chmsu_user_accounts s
-                                          JOIN chmsu_students_master m ON s.chmsu_student_id = m.chmsu_student_id
-                                          LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id
-                                          WHERE m.chmsu_course = '$course' $where_sql
+                // Fetch from master, NOT user accounts to avoid duplicates
+                $completed = $conn->query("SELECT m.chmsu_student_id, m.chmsu_full_name as chmsu_name, m.chmsu_year, m.chmsu_section,
+                                          (SELECT COUNT(DISTINCT cs.office_name) 
+                                           FROM chmsu_clearance_status cs
+                                           WHERE cs.student_id = m.chmsu_student_id 
+                                           AND cs.status = 'clear' 
+                                           $sem_clause) as approved_count
+                                          FROM chmsu_students_master m
+                                          WHERE m.chmsu_course = '$course' 
+                                          AND m.is_archived = 0
+                                          $where_sql
                                           HAVING approved_count = $totalOffices
                                           ORDER BY m.chmsu_year, m.chmsu_section, m.chmsu_last_name");
-                if ($completed->num_rows > 0):
+                if ($completed && $completed->num_rows > 0):
             ?>
             <div class="course-group">
                 <div class="course-header complete"><?php echo $course; ?> - Complete</div>
                 <table class="plain-table">
                     <thead>
-                        <tr><th>ID</th><th>Name</th><th>Year</th><th>Section</th><th>Status</th><th>Certificate</th>
+                        <tr><th>ID</th><th>Name</th><th>Year</th><th>Section</th><th>Status</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -301,7 +355,6 @@ $currentSection = 'clearance';
                             <td><?php echo $c['chmsu_year']; ?></td>
                             <td><?php echo $c['chmsu_section']; ?></td>
                             <td><span class="status-badge status-approved">Complete</span></td>
-                            <td><a href="?print_certificate=<?php echo $c['chmsu_student_id']; ?>" target="_blank" class="btn-primary btn-sm">Print Certificate</a></td>
                         </tr>
                         <?php endwhile; ?>
                     </tbody>
@@ -322,19 +375,19 @@ $currentSection = 'clearance';
                 if($clearance_filter_section) $where_conditions[] = "m.chmsu_section='$clearance_filter_section'";
                 $where_sql = !empty($where_conditions) ? "AND " . implode(" AND ", $where_conditions) : "";
                 
-                $incomplete = $conn->query("SELECT s.chmsu_student_id, u.chmsu_name, m.chmsu_year, m.chmsu_section,
-                                           (SELECT COUNT(DISTINCT r.chmsu_office) 
-                                            FROM chmsu_submissions s2
-                                            JOIN chmsu_requirements r ON s2.chmsu_requirement_id = r.chmsu_id
-                                            WHERE s2.chmsu_student_id = s.chmsu_student_id 
-                                            AND s2.chmsu_status = 'Approved') as approved_count
-                                           FROM chmsu_user_accounts s
-                                           JOIN chmsu_students_master m ON s.chmsu_student_id = m.chmsu_student_id
-                                           LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id
-                                           WHERE m.chmsu_course = '$course' $where_sql
+                $incomplete = $conn->query("SELECT m.chmsu_student_id, m.chmsu_full_name as chmsu_name, m.chmsu_year, m.chmsu_section,
+                                           (SELECT COUNT(DISTINCT cs.office_name) 
+                                            FROM chmsu_clearance_status cs
+                                            WHERE cs.student_id = m.chmsu_student_id 
+                                            AND cs.status = 'clear' 
+                                            $sem_clause) as approved_count
+                                           FROM chmsu_students_master m
+                                           WHERE m.chmsu_course = '$course' 
+                                           AND m.is_archived = 0
+                                           $where_sql
                                            HAVING approved_count < $totalOffices OR approved_count IS NULL
                                            ORDER BY m.chmsu_year, m.chmsu_section, m.chmsu_last_name");
-                if ($incomplete->num_rows > 0):
+                if ($incomplete && $incomplete->num_rows > 0):
             ?>
             <div class="course-group">
                 <div class="course-header incomplete"><?php echo $course; ?> - Incomplete</div>

@@ -1,8 +1,57 @@
 <?php
+// ============================================
+// FIX: Prevent "headers already sent" errors
+// Buffer all output so header("Location: ...") keeps working.
+// ============================================
+if (!ob_get_level()) {
+    ob_start();
+}
+
+// ============================================
+// INCREASE TIMEOUT FOR BULK EMAIL OPERATIONS
+// ============================================
+@set_time_limit(120);
+@ini_set('max_execution_time', 120);
+
 $office = $_SESSION['office'];
 $storage_used = getTotalUploadSize();
 $storage_percent = min(($storage_used / (100 * 1024 * 1024)) * 100, 100);
 $currentOfficeSection = 'note';
+
+// ============================================
+// DETECT CURRENT SEMESTER + SCHOOL YEAR
+// ============================================
+$current_sem_row = $conn->query("SELECT * FROM chmsu_semesters WHERE is_current = 1 LIMIT 1")->fetch_assoc();
+$current_sem_id = $current_sem_row ? intval($current_sem_row['id']) : 0;
+$current_sem_name = $current_sem_row ? $current_sem_row['semester_name'] : '—';
+
+$current_sy_label = '—';
+if ($current_sem_row && !empty($current_sem_row['school_year_id'])) {
+    $syCol = 'school_year';
+    $syColCheck = $conn->query("SHOW COLUMNS FROM chmsu_school_years");
+    if ($syColCheck) {
+        $syCols = [];
+        while ($c = $syColCheck->fetch_assoc()) $syCols[] = $c['Field'];
+        foreach (['school_year','year_name','sy','name','school_year_name'] as $cand) {
+            if (in_array($cand, $syCols)) { $syCol = $cand; break; }
+        }
+    }
+    $syId = intval($current_sem_row['school_year_id']);
+    $syR = $conn->query("SELECT `$syCol` as label FROM chmsu_school_years WHERE id = $syId LIMIT 1")->fetch_assoc();
+    if ($syR) $current_sy_label = $syR['label'];
+}
+
+// ============================================
+// ENSURE chmsu_feed HAS semester_id + school_year_id
+// ============================================
+$feedChk1 = $conn->query("SHOW COLUMNS FROM chmsu_feed LIKE 'semester_id'");
+if ($feedChk1 && $feedChk1->num_rows == 0) {
+    $conn->query("ALTER TABLE chmsu_feed ADD COLUMN semester_id INT(11) DEFAULT NULL");
+}
+$feedChk2 = $conn->query("SHOW COLUMNS FROM chmsu_feed LIKE 'school_year_id'");
+if ($feedChk2 && $feedChk2->num_rows == 0) {
+    $conn->query("ALTER TABLE chmsu_feed ADD COLUMN school_year_id INT(11) DEFAULT NULL AFTER semester_id");
+}
 
 // ============================================
 // CREATE TABLES IF NOT EXISTS
@@ -16,209 +65,322 @@ $conn->query("CREATE TABLE IF NOT EXISTS chmsu_hidden_posts (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
 // ============================================
+// DISPLAY FLASH MESSAGES
+// ============================================
+$error = '';
+$success = '';
+if (isset($_SESSION['note_flash_success'])) {
+    $success = $_SESSION['note_flash_success'];
+    unset($_SESSION['note_flash_success']);
+}
+if (isset($_SESSION['note_flash_error'])) {
+    $error = $_SESSION['note_flash_error'];
+    unset($_SESSION['note_flash_error']);
+}
+
+// ============================================
 // HANDLE POST ADVISORY
 // ============================================
 if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
     $subject = sanitize($_POST['subject']);
     $content = sanitize($_POST['content']);
     $mentioned_names_raw = isset($_POST['mentioned_students']) ? $_POST['mentioned_students'] : '';
-    $mentioned_section = isset($_POST['mentioned_section']) ? sanitize($_POST['mentioned_section']) : '';
-    $mentioned_year = isset($_POST['mentioned_year']) ? sanitize($_POST['mentioned_year']) : '';
+    $mentioned_sections_raw = isset($_POST['mentioned_sections']) ? $_POST['mentioned_sections'] : '';
+    $mentioned_courses_raw = isset($_POST['mentioned_courses']) ? $_POST['mentioned_courses'] : '';
     $office = $_SESSION['office'];
-    
-    // ============================================
-    // Get students by section from masterlist - CASE INSENSITIVE & TRIM
-    // ============================================
+
+    // Parse mentioned sections (JSON array)
+    $mentioned_sections = array();
+    if (!empty($mentioned_sections_raw)) {
+        $decoded = json_decode($mentioned_sections_raw, true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $sec) {
+                $y = isset($sec['year']) ? trim($sec['year']) : '';
+                $s = isset($sec['section']) ? strtoupper(trim($sec['section'])) : '';
+                $c = isset($sec['course']) ? strtoupper(trim($sec['course'])) : '';
+                if ($y !== '' && $s !== '') {
+                    $mentioned_sections[] = array('year' => $y, 'section' => $s, 'course' => $c);
+                }
+            }
+        }
+    }
+
+    // Parse mentioned courses (JSON array)
+    $mentioned_courses = array();
+    if (!empty($mentioned_courses_raw)) {
+        $decoded_c = json_decode($mentioned_courses_raw, true);
+        if (is_array($decoded_c)) {
+            foreach ($decoded_c as $cr) {
+                $cc = isset($cr['course']) ? strtoupper(trim($cr['course'])) : '';
+                if ($cc !== '') {
+                    $mentioned_courses[] = array('course' => $cc);
+                }
+            }
+        }
+    }
+
+    // Get students by section
     $section_students = array();
-    if (!empty($mentioned_section) && !empty($mentioned_year)) {
-        // Clean up the section value - trim and uppercase for comparison
-        $clean_section = strtoupper(trim($mentioned_section));
-        $clean_year = trim($mentioned_year);
-        
-        $sectionQuery = $conn->query("SELECT chmsu_student_id, chmsu_full_name, email 
+    foreach ($mentioned_sections as $sec) {
+        $clean_year = $sec['year'];
+        $clean_section = $sec['section'];
+        $clean_course = $sec['course'];
+        $courseClause = $clean_course !== '' ? " AND UPPER(TRIM(chmsu_course)) = '$clean_course' " : "";
+
+        $sectionQuery = $conn->query("SELECT chmsu_student_id, chmsu_full_name, chmsu_course, chmsu_year, chmsu_section, email 
                                       FROM chmsu_students_master 
                                       WHERE chmsu_year = '$clean_year' 
                                       AND TRIM(UPPER(chmsu_section)) = '$clean_section'
-                                      AND is_archived = 0");
-        
-        // DEBUG: Log the query and count
-        error_log("Section query: SELECT chmsu_student_id, chmsu_full_name, email FROM chmsu_students_master WHERE chmsu_year = '$clean_year' AND TRIM(UPPER(chmsu_section)) = '$clean_section' AND is_archived = 0");
-        error_log("Found " . $sectionQuery->num_rows . " students in section");
-        
+                                      $courseClause
+                                      AND is_archived = 0
+                                      ORDER BY chmsu_last_name ASC, chmsu_first_name ASC");
         while ($s = $sectionQuery->fetch_assoc()) {
             $section_students[] = $s;
         }
-        
-        // If no students found, try with archived students too (just in case)
-        if (empty($section_students)) {
-            $sectionQuery = $conn->query("SELECT chmsu_student_id, chmsu_full_name, email 
-                                          FROM chmsu_students_master 
-                                          WHERE chmsu_year = '$clean_year' 
-                                          AND TRIM(UPPER(chmsu_section)) = '$clean_section'");
-            while ($s = $sectionQuery->fetch_assoc()) {
+        if ($sectionQuery->num_rows == 0) {
+            $sectionQuery2 = $conn->query("SELECT chmsu_student_id, chmsu_full_name, chmsu_course, chmsu_year, chmsu_section, email 
+                                           FROM chmsu_students_master 
+                                           WHERE chmsu_year = '$clean_year' 
+                                           AND TRIM(UPPER(chmsu_section)) = '$clean_section'
+                                           $courseClause
+                                           ORDER BY chmsu_last_name ASC, chmsu_first_name ASC");
+            while ($s = $sectionQuery2->fetch_assoc()) {
                 $section_students[] = $s;
-            }
-            if (!empty($section_students)) {
-                error_log("Found " . count($section_students) . " students in section (including archived)");
             }
         }
     }
-    
-    // ============================================
-    // Handle individual student mentions
-    // ============================================
+
+    // Get students by course
+    $course_students = array();
+    foreach ($mentioned_courses as $cr) {
+        $clean_course = $cr['course'];
+        if ($clean_course === '') continue;
+
+        $courseQuery = $conn->query("SELECT chmsu_student_id, chmsu_full_name, chmsu_course, chmsu_year, chmsu_section, email 
+                                     FROM chmsu_students_master 
+                                     WHERE UPPER(TRIM(chmsu_course)) = '$clean_course'
+                                     AND is_archived = 0
+                                     ORDER BY CAST(chmsu_year AS UNSIGNED) ASC, chmsu_section ASC, chmsu_last_name ASC, chmsu_first_name ASC");
+        while ($s = $courseQuery->fetch_assoc()) {
+            $course_students[] = $s;
+        }
+        if ($courseQuery->num_rows == 0) {
+            $courseQuery2 = $conn->query("SELECT chmsu_student_id, chmsu_full_name, chmsu_course, chmsu_year, chmsu_section, email 
+                                          FROM chmsu_students_master 
+                                          WHERE UPPER(TRIM(chmsu_course)) = '$clean_course'
+                                          ORDER BY CAST(chmsu_year AS UNSIGNED) ASC, chmsu_section ASC, chmsu_last_name ASC, chmsu_first_name ASC");
+            while ($s = $courseQuery2->fetch_assoc()) {
+                $course_students[] = $s;
+            }
+        }
+    }
+
+    $section_student_ids = array();
+    foreach ($section_students as $ss) $section_student_ids[] = $ss['chmsu_student_id'];
+    $course_student_ids = array();
+    foreach ($course_students as $cs) $course_student_ids[] = $cs['chmsu_student_id'];
+    $group_student_ids = array_values(array_unique(array_merge($section_student_ids, $course_student_ids)));
+
+    // Individual mentions
     $mentioned_names = array();
     if (!empty($mentioned_names_raw)) {
-        // Split by ||| delimiter
         if (strpos($mentioned_names_raw, '|||') !== false) {
             $mentioned_names = array_map('trim', explode('|||', $mentioned_names_raw));
         } else {
-            // Fallback: split by comma and try to group full names
-            $temp = array_map('trim', explode(',', $mentioned_names_raw));
-            $full_names = array();
-            $i = 0;
-            while ($i < count($temp)) {
-                if (isset($temp[$i+1]) && isset($temp[$i+2])) {
-                    $combined = $temp[$i] . ', ' . $temp[$i+1] . ', ' . $temp[$i+2];
-                    $check = $conn->query("SELECT chmsu_full_name FROM chmsu_students_master WHERE chmsu_full_name = '$combined'");
-                    if ($check && $check->num_rows > 0) {
-                        $full_names[] = $combined;
-                        $i += 3;
-                        continue;
-                    }
-                }
-                if (isset($temp[$i+1])) {
-                    $combined = $temp[$i] . ', ' . $temp[$i+1];
-                    $check = $conn->query("SELECT chmsu_full_name FROM chmsu_students_master WHERE chmsu_full_name = '$combined'");
-                    if ($check && $check->num_rows > 0) {
-                        $full_names[] = $combined;
-                        $i += 2;
-                        continue;
-                    }
-                }
-                $full_names[] = $temp[$i];
-                $i++;
-            }
-            $mentioned_names = $full_names;
+            $mentioned_names = array_filter(array_map('trim', explode(',', $mentioned_names_raw)));
         }
     }
-    
-    // Filter out empty values and remove duplicates
-    $mentioned_names = array_filter($mentioned_names, function($name) {
-        return !empty(trim($name));
-    });
     $mentioned_names = array_values(array_unique($mentioned_names));
-    
+
     $mention_ids = array();
     $mention_emails = array();
     $mention_full_names = array();
-    
-    // Get student data for each individual mention
+
     foreach ($mentioned_names as $student_name) {
         $student_name = trim(sanitize($student_name));
         if (empty($student_name)) continue;
-        
+
         $student = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, u.email 
                                  FROM chmsu_students_master s
                                  LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id
                                  WHERE s.chmsu_full_name = '$student_name' 
                                  LIMIT 1");
-        
         if ($student && $student->num_rows > 0) {
             $s = $student->fetch_assoc();
+            if (in_array($s['chmsu_student_id'], $group_student_ids)) continue;
             $mention_ids[] = $s['chmsu_student_id'];
             $mention_full_names[] = $s['chmsu_full_name'];
             $mention_emails[] = $s['email'];
         }
     }
-    
-    // ============================================
-    // Add section students to the mention list
-    // ============================================
-    $section_mention_names = array();
-    foreach ($section_students as $s) {
-        // Check if already mentioned individually
-        if (!in_array($s['chmsu_student_id'], $mention_ids)) {
-            $mention_ids[] = $s['chmsu_student_id'];
-            $mention_full_names[] = $s['chmsu_full_name'];
-            $mention_emails[] = $s['email'];
-            $section_mention_names[] = $s['chmsu_full_name'];
-        }
-    }
-    
-    // ============================================
-    // Check if any students were mentioned (individual or section)
-    // ============================================
-    if (empty($mention_ids)) {
-        $error = "Please mention at least one student or select a section with students.";
+
+    sort($mention_full_names, SORT_NATURAL | SORT_FLAG_CASE);
+    $mention_full_names = array_values(array_unique($mention_full_names));
+    $all_notify_ids = array_values(array_unique(array_merge($mention_ids, $group_student_ids)));
+
+    if (empty($all_notify_ids) && empty($mentioned_sections) && empty($mentioned_courses)) {
+        $_SESSION['note_flash_error'] = "Please mention at least one student, section, or course.";
+        header("Location: ?officesection=note");
+        exit;
     } else {
-        $primary_student_id = $mention_ids[0];
-        
-        // Build section mention text
-        $section_text = '';
-        if (!empty($mentioned_section) && !empty($mentioned_year)) {
-            $section_text = " (Section: " . $mentioned_year . "th Year - " . $mentioned_section . ")";
+        $primary_student_id = !empty($all_notify_ids) ? $all_notify_ids[0] : '';
+
+        // Build SECTION SEPARATOR BLOCK
+        $section_block = '';
+        if (!empty($mentioned_sections)) {
+            $grouped_by_section = array();
+            foreach ($mentioned_sections as $sec) {
+                $key = ($sec['course'] !== '' ? $sec['course'] . ' - ' : '') . $sec['year'] . 'th Year - ' . $sec['section'];
+                $grouped_by_section[$key] = array();
+            }
+            foreach ($section_students as $s) {
+                $sc = strtoupper(trim($s['chmsu_course']));
+                foreach ($mentioned_sections as $sec) {
+                    if ($sc === $sec['course'] || $sec['course'] === '') {
+                        if ((string)$s['chmsu_year'] === (string)$sec['year'] &&
+                            strtoupper(trim($s['chmsu_section'])) === $sec['section']) {
+                            $key = ($sec['course'] !== '' ? $sec['course'] . ' - ' : '') . $sec['year'] . 'th Year - ' . $sec['section'];
+                            $grouped_by_section[$key][] = $s['chmsu_full_name'];
+                            break;
+                        }
+                    }
+                }
+            }
+
+            uksort($grouped_by_section, function($a, $b) {
+                preg_match('/(\d+)/', $a, $ma);
+                preg_match('/(\d+)/', $b, $mb);
+                $ya = isset($ma[1]) ? intval($ma[1]) : 0;
+                $yb = isset($mb[1]) ? intval($mb[1]) : 0;
+                if ($ya !== $yb) return $ya - $yb;
+                return strcmp($a, $b);
+            });
+
+            $section_block .= "\n\n=== SECTION MENTION ===";
+            foreach ($grouped_by_section as $label => $names) {
+                sort($names, SORT_NATURAL | SORT_FLAG_CASE);
+                $section_block .= "\n[" . $label . "]";
+                foreach ($names as $n) $section_block .= "\n- " . $n;
+                $section_block .= "\n---SEP---";
+            }
+            $section_block .= "\n=== END SECTION ===";
         }
-        
-        // Build full content with mentions
+
+        // Build COURSE SEPARATOR BLOCK
+        $course_block = '';
+        if (!empty($mentioned_courses)) {
+            $grouped_by_course = array();
+            foreach ($mentioned_courses as $cr) $grouped_by_course[$cr['course']] = array();
+
+            foreach ($course_students as $s) {
+                $sc = strtoupper(trim($s['chmsu_course']));
+                if (!isset($grouped_by_course[$sc])) continue;
+                $yearNumeric = intval($s['chmsu_year']);
+                $subKey = $yearNumeric . 'th Year - Section ' . strtoupper(trim($s['chmsu_section']));
+                if (!isset($grouped_by_course[$sc][$subKey])) $grouped_by_course[$sc][$subKey] = array();
+                $grouped_by_course[$sc][$subKey][] = $s['chmsu_full_name'];
+            }
+
+            ksort($grouped_by_course);
+
+            $course_block .= "\n\n=== COURSE MENTION ===";
+            foreach ($grouped_by_course as $courseName => $subgroups) {
+                uksort($subgroups, function($a, $b) {
+                    preg_match('/^(\d+)/', $a, $ma);
+                    preg_match('/^(\d+)/', $b, $mb);
+                    $ya = isset($ma[1]) ? intval($ma[1]) : 0;
+                    $yb = isset($mb[1]) ? intval($mb[1]) : 0;
+                    if ($ya !== $yb) return $ya - $yb;
+                    return strcmp($a, $b);
+                });
+
+                $course_block .= "\n{" . $courseName . "}";
+                foreach ($subgroups as $subLabel => $names) {
+                    sort($names, SORT_NATURAL | SORT_FLAG_CASE);
+                    $course_block .= "\n<" . $subLabel . ">";
+                    foreach ($names as $n) $course_block .= "\n- " . $n;
+                    $course_block .= "\n---SEP---";
+                }
+                $course_block .= "\n---COURSE-SEP---";
+            }
+            $course_block .= "\n=== END COURSE ===";
+        }
+
+        // Build final content
         $all_mentions = implode('|||', $mention_full_names);
         $full_content = $content;
-        
-        if (!empty($all_mentions)) {
-            $full_content .= "\n\n👥 Mentioned: " . $all_mentions;
+        if (!empty($all_mentions)) $full_content .= "\n\n👥 Mentioned: " . $all_mentions;
+        $full_content .= $section_block;
+        $full_content .= $course_block;
+
+        $section_text = '';
+        if (!empty($mentioned_sections)) {
+            $section_labels = array();
+            foreach ($mentioned_sections as $sec) $section_labels[] = ($sec['course'] !== '' ? $sec['course'] . ' - ' : '') . $sec['year'] . "th Year - " . $sec['section'];
+            $section_text .= " (Sections: " . implode(', ', $section_labels) . ")";
         }
-        
-        // Insert into chmsu_feed
+        if (!empty($mentioned_courses)) {
+            $course_labels = array();
+            foreach ($mentioned_courses as $cr) $course_labels[] = $cr['course'];
+            $section_text .= " (Courses: " . implode(', ', $course_labels) . ")";
+        }
+
+        $subject_esc = $conn->real_escape_string($subject);
+        $content_esc = $conn->real_escape_string($full_content);
+        $primary_esc = $conn->real_escape_string($primary_student_id);
+        $office_esc = $conn->real_escape_string($office);
+
+        $insert_sem_id = $current_sem_id > 0 ? $current_sem_id : 'NULL';
+        $insert_sy_id  = ($current_sem_row && !empty($current_sem_row['school_year_id'])) ? intval($current_sem_row['school_year_id']) : 'NULL';
+
         $insert = $conn->query("INSERT INTO chmsu_feed 
-                               (office_name, student_id, title, content, priority, category, is_pinned, is_archived, created_by) 
-                               VALUES ('$office', '$primary_student_id', '$subject', '$full_content', 'medium', 'advisory', 0, 0, '$office')");
-        
+                               (office_name, student_id, title, content, priority, category, is_pinned, is_archived, created_by, semester_id, school_year_id) 
+                               VALUES ('$office_esc', '$primary_esc', '$subject_esc', '$content_esc', 'medium', 'advisory', 0, 0, '$office_esc', $insert_sem_id, $insert_sy_id)");
+
         if ($insert) {
             $feed_id = $conn->insert_id;
-            
-            // Notify ALL students about new update
+
             $allStudents = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, u.email 
                                          FROM chmsu_students_master s
                                          LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id
                                          WHERE s.is_archived = 0");
-            
+
+            $emailSentCount = 0;
+            $maxEmailsPerPost = 20;
+
             while ($allStudent = $allStudents->fetch_assoc()) {
                 $sid = $allStudent['chmsu_student_id'];
                 $sname = $allStudent['chmsu_full_name'];
                 $semail = $allStudent['email'];
-                $isMentioned = in_array($sid, $mention_ids);
-                
-                // System notification for ALL students
+                $isMentioned = in_array($sid, $all_notify_ids);
+
                 $notif_title = $isMentioned ? "🔔 You were mentioned by $office" : "📢 New update from $office";
                 $notif_message = $isMentioned ? "You were mentioned in: $subject" : "New advisory posted: $subject";
-                
+
+                $sid_esc = $conn->real_escape_string($sid);
+                $nt = $conn->real_escape_string($notif_title);
+                $nm = $conn->real_escape_string($notif_message);
+
                 $conn->query("INSERT INTO chmsu_notifications 
                               (user_type, user_id, student_id, office_name, title, message, type, related_id, feed_id, link) 
                               VALUES 
-                              ('student', '$sid', '$sid', '$office', 
-                               '$notif_title', '$notif_message', 'feed', $feed_id, $feed_id, '?view=feed')");
-                
-                // Gmail notification - ONLY for mentioned students
-                if ($isMentioned && !empty($semail)) {
-                    $subject_email = "🔔 URGENT: You were mentioned by $office - CHMSU";
+                              ('student', '$sid_esc', '$sid_esc', '$office_esc', 
+                               '$nt', '$nm', 'feed', $feed_id, $feed_id, '?view=feed')");
+
+                if ($isMentioned && !empty($semail) && $emailSentCount < $maxEmailsPerPost) {
+                    $emailSentCount++;
+                    $subject_email = "URGENT: You were mentioned by $office - CHMSU";
                     $email_message = "
-                    <html>
-                    <head>
-                    <style>
+                    <html><head><style>
                         body { font-family: 'Times New Roman', Times, serif; }
                         .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
                         .header { background: #1b4d3e; color: white; padding: 15px; text-align: center; }
-                        .header h2 { margin: 0; }
                         .alarm { background: #e74c3c; color: white; padding: 15px; text-align: center; font-size: 22px; font-weight: bold; border-radius: 4px; margin: 15px 0; }
                         .subject-box { background: #f8f9fa; padding: 15px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #1b4d3e; }
-                        .subject-box h3 { color: #1b4d3e; margin: 0; font-size: 18px; }
                         .note-box { background: #f8f9fa; padding: 15px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #f39c12; }
                         .footer { text-align: center; padding: 15px; font-size: 12px; color: #666; border-top: 1px solid #ddd; margin-top: 20px; }
                         .btn { display: inline-block; background: #1b4d3e; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; }
-                        .section-tag { background: #3498db; color: white; padding: 2px 10px; border-radius: 12px; font-size: 11px; }
-                    </style>
-                    </head>
-                    <body>
+                    </style></head><body>
                         <div class='container'>
                             <div class='header'><h2>CHMSU E-Clearance System</h2></div>
                             <div class='alarm'>🚨 YOU HAVE BEEN MENTIONED 🚨</div>
@@ -236,19 +398,22 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
                             </div>
                             <div class='footer'><p>CHMSU E-Clearance System</p></div>
                         </div>
-                    </body>
-                    </html>
+                    </body></html>
                     ";
-                    sendEmail($semail, $sname, $subject_email, $email_message, true);
+                    @sendEmail($semail, $sname, $subject_email, $email_message, true);
                 }
             }
-            
+
             $totalMentioned = count($mention_full_names);
-            $sectionMsg = (!empty($mentioned_section) && !empty($mentioned_year) && count($section_students) > 0) ? " and " . count($section_students) . " student(s) from " . $mentioned_year . "th Year - " . $mentioned_section : "";
             logActivity($conn, $office, 'office', "Posted advisory with mentions: $subject");
-            $success = "Advisory posted! " . $totalMentioned . " student(s) mentioned" . $sectionMsg . ".";
+
+            $_SESSION['note_flash_success'] = "Advisory posted! " . $totalMentioned . " individual(s) mentioned.";
+            header("Location: ?officesection=note");
+            exit;
         } else {
-            $error = "Failed to post advisory: " . $conn->error;
+            $_SESSION['note_flash_error'] = "Failed to post advisory: " . $conn->error;
+            header("Location: ?officesection=note");
+            exit;
         }
     }
 }
@@ -262,12 +427,24 @@ if (isset($_POST['action']) && $_POST['action'] == 'delete_note' && isset($_SESS
     $conn->query("DELETE FROM chmsu_notifications WHERE feed_id = $note_id");
     $conn->query("DELETE FROM chmsu_feed_views WHERE feed_id = $note_id");
     $conn->query("DELETE FROM chmsu_hidden_posts WHERE post_id = $note_id");
-    $success = "Advisory deleted successfully!";
+
+    $_SESSION['note_flash_success'] = "Advisory deleted successfully!";
+    header("Location: ?officesection=note");
+    exit;
 }
 
 // ============================================
 // GET ALL NOTES FOR THIS OFFICE
 // ============================================
+$has_sem_col = false;
+$chk_sem_col = $conn->query("SHOW COLUMNS FROM chmsu_feed LIKE 'semester_id'");
+if ($chk_sem_col && $chk_sem_col->num_rows > 0) $has_sem_col = true;
+
+$sem_filter = '';
+if ($has_sem_col && $current_sem_id > 0) {
+    $sem_filter = " AND f.semester_id = $current_sem_id ";
+}
+
 $notes = $conn->query("SELECT f.*, 
                         (SELECT COUNT(*) FROM chmsu_feed_views v WHERE v.feed_id = f.id) as view_count,
                         (SELECT GROUP_CONCAT(CONCAT(s.chmsu_full_name, ' (', DATE_FORMAT(v.viewed_at, '%m/%d/%Y %h:%i %p'), ')') SEPARATOR ', ') 
@@ -275,315 +452,265 @@ $notes = $conn->query("SELECT f.*,
                          JOIN chmsu_students_master s ON v.student_id = s.chmsu_student_id
                          WHERE v.feed_id = f.id ORDER BY v.viewed_at DESC) as viewers
                         FROM chmsu_feed f 
-                        WHERE f.office_name='$office' 
+                        WHERE f.office_name='$office' $sem_filter
                         ORDER BY f.created_at DESC");
 $totalPosts = $notes ? $notes->num_rows : 0;
 $allNotes = [];
 if ($notes && $notes->num_rows > 0) {
-    while ($row = $notes->fetch_assoc()) {
-        $allNotes[] = $row;
-    }
+    while ($row = $notes->fetch_assoc()) $allNotes[] = $row;
 }
 
 // ============================================
 // GET ALL STUDENTS FOR AUTOCOMPLETE
 // ============================================
-$students = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, s.chmsu_last_name, s.chmsu_first_name, u.email 
+$students = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, s.chmsu_last_name, s.chmsu_first_name, s.chmsu_year, s.chmsu_section, s.chmsu_course, u.email 
                           FROM chmsu_students_master s
                           LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id
                           WHERE s.is_archived = 0 
                           ORDER BY s.chmsu_last_name ASC");
 $allStudents = [];
 if ($students && $students->num_rows > 0) {
-    while ($s = $students->fetch_assoc()) {
-        $allStudents[] = $s;
-    }
+    while ($s = $students->fetch_assoc()) $allStudents[] = $s;
 }
 
 // ============================================
-// GET SECTIONS FOR DROPDOWN - UPPERCASE FOR CONSISTENCY
+// GET DISTINCT COURSES
 // ============================================
-$sections = $conn->query("SELECT DISTINCT UPPER(TRIM(section_name)) as section_name FROM chmsu_course_sections ORDER BY section_name");
-$years = [1, 2, 3, 4];
-?>
+$courses_result = $conn->query("SELECT DISTINCT UPPER(TRIM(chmsu_course)) as course_code 
+                                FROM chmsu_students_master 
+                                WHERE is_archived = 0 AND chmsu_course IS NOT NULL AND chmsu_course != ''
+                                ORDER BY course_code ASC");
+$allCourses = [];
+if ($courses_result && $courses_result->num_rows > 0) {
+    while ($c = $courses_result->fetch_assoc()) $allCourses[] = $c['course_code'];
+}
 
+// ============================================
+// GET DISTINCT SECTIONS
+// ============================================
+$sections_result = $conn->query("SELECT DISTINCT UPPER(TRIM(chmsu_course)) as course_code, chmsu_year, UPPER(TRIM(chmsu_section)) as section_name 
+                                 FROM chmsu_students_master 
+                                 WHERE is_archived = 0
+                                 ORDER BY course_code ASC, CAST(chmsu_year AS UNSIGNED) ASC, section_name ASC");
+$allSections = [];
+if ($sections_result && $sections_result->num_rows > 0) {
+    while ($sec = $sections_result->fetch_assoc()) $allSections[] = $sec;
+}
+
+$years = [1, 2, 3, 4];
+
+// Get chat unread count for sidebar badge
+$chat_unread_count = $conn->query("SELECT SUM(office_unread) as total FROM chmsu_chat_conversations WHERE office_name='$office'")->fetch_assoc()['total'] ?: 0;
+
+while (ob_get_level() > 0) { ob_end_flush(); }
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CHMSU E-Clearance System - <?php echo strtoupper($office); ?> Advisories</title>
+
+    <!-- Apply dark mode BEFORE paint -->
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('darkMode') === 'true') {
+                    document.documentElement.classList.add('dark');
+                }
+            } catch (e) {}
+        })();
+    </script>
+
+    <!-- Lucide Icons & Tailwind (Unified Assets matching Dashboard) -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { brand: { DEFAULT: '#1b4d3e', 600: '#2d6a4f', 50: '#eef6f2' }, gold: '#f1c40f' } } }
+        };
+    </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- SHARED SHELL STYLES (Identical to Dashboard) -->
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Times New Roman', Times, serif; background: #f5f5f5; font-size: 14px; }
-        
-        .header {
-            background: #1b4d3e;
-            color: white;
-            padding: 15px 25px;
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-        }
+
+        .header { background: #1b4d3e; color: white; padding: 15px 25px; display: flex; align-items: center; gap: 20px; position: sticky; top: 0; z-index: 1000; }
         .header-logo img { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
         .header-title h1 { font-size: 20px; font-weight: normal; }
         .header-title p { font-size: 11px; opacity: 0.8; margin-top: 3px; }
-        .dark-mode-toggle { background: transparent; border: 1px solid rgba(255,255,255,0.3); color: white; padding: 6px 12px; cursor: pointer; margin-left: auto; }
-        .logout-btn { background: #e74c3c; color: white; padding: 6px 15px; border: none; cursor: pointer; }
-        
+        .dark-mode-toggle { background: transparent; border: 1px solid rgba(255,255,255,0.3); color: white; padding: 6px 12px; cursor: pointer; margin-left: auto; display: flex; align-items: center; gap: 6px; border-radius: 4px; font-family: 'Times New Roman', Times, serif; }
+        .dark-mode-toggle:hover { background: rgba(255,255,255,0.15); }
+        .logout-btn { background: #e74c3c; color: white; padding: 6px 15px; border: none; cursor: pointer; border-radius: 4px; display: flex; align-items: center; gap: 6px; font-family: 'Times New Roman', Times, serif; }
+        .logout-btn:hover { background: #c0392b; }
+
         .dashboard-wrapper { display: flex; min-height: calc(100vh - 73px); }
-        
-        .office-sidebar {
-            width: 260px;
-            background: #1b4d3e;
-            color: white;
-            position: fixed;
-            height: calc(100vh - 73px);
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
+
+        /* SIDEBAR (Identical to Dashboard) */
+        .office-sidebar { width: 260px; background: #1b4d3e; color: white; position: fixed; height: calc(100vh - 73px); overflow-y: auto; overflow-x: hidden; z-index: 1001; }
         .office-sidebar::-webkit-scrollbar { width: 5px; }
         .office-sidebar::-webkit-scrollbar-track { background: #2d6a4f; }
         .office-sidebar::-webkit-scrollbar-thumb { background: #f1c40f; border-radius: 5px; }
         .office-sidebar .sidebar-header { padding: 20px; border-bottom: 1px solid #2d6a4f; }
         .office-sidebar .sidebar-header h3 { font-size: 16px; font-weight: normal; }
-        .office-sidebar .sidebar-menu { list-style: none; padding: 0; margin: 0; }
+        .office-sidebar .sidebar-header p { font-size: 11px; opacity: 0.7; margin-top: 5px; }
+        .office-sidebar .sidebar-menu { list-style: none; padding: 0; margin: 0; padding-bottom: 20px; }
         .office-sidebar .sidebar-menu li { border-bottom: 1px solid #2d6a4f; }
-        .office-sidebar .sidebar-menu a {
-            display: block;
-            padding: 12px 20px;
-            color: white;
-            text-decoration: none;
-            font-size: 13px;
-            transition: all 0.3s;
-        }
-        .office-sidebar .sidebar-menu a:hover,
-        .office-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
-        
+        .office-sidebar .sidebar-menu a { display: block; padding: 12px 20px; color: white; text-decoration: none; font-size: 13px; transition: all 0.3s; position: relative; pointer-events: auto; cursor: pointer; }
+        .office-sidebar .sidebar-menu a:hover, .office-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
+        .office-sidebar .sidebar-menu a .chat-badge { background: #e74c3c; color: white; border-radius: 12px; padding: 2px 8px; font-size: 10px; min-width: 20px; text-align: center; float: right; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.15); } 100% { transform: scale(1); } }
+
         .main-content { flex: 1; margin-left: 260px; padding: 20px; background: #f5f5f5; min-height: calc(100vh - 73px); }
-        .dashboard-header-bar {
-            background: white;
-            padding: 15px 20px;
-            border: 1px solid #ddd;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
+        .dashboard-header-bar { background: white; padding: 15px 20px; border: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .dashboard-header-bar h2 { font-size: 18px; font-weight: normal; color: #1b4d3e; }
-        
-        .content-card { background: white; border: 1px solid #ddd; margin-bottom: 20px; border-radius: 8px; overflow: hidden; }
-        .content-card-header { background: #f8f9fa; padding: 12px 15px; border-bottom: 1px solid #ddd; font-size: 13px; font-weight: normal; display: flex; justify-content: space-between; align-items: center; }
-        .content-card-body { padding: 15px; }
-        
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; margin-bottom: 5px; color: #333; font-size: 12px; }
-        input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid #ddd; font-size: 13px; border-radius: 4px; }
-        input:focus, select:focus, textarea:focus { outline: none; border-color: #1b4d3e; }
-        
-        .btn { padding: 8px 15px; border: none; cursor: pointer; font-size: 12px; border-radius: 4px; }
-        .btn-primary { background: #1b4d3e; color: white; }
-        .btn-primary:hover { background: #2d6a4f; }
-        .btn-danger { background: #e74c3c; color: white; }
-        .btn-danger:hover { background: #c0392b; }
-        .btn-sm { padding: 4px 8px; font-size: 11px; }
-        
-        .filter-row { display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; }
-        
-        .student-scanner { position: relative; }
-        .student-scanner input { width: 100%; padding: 8px 10px; border: 1px solid #ddd; font-size: 13px; border-radius: 4px; }
-        .student-suggestions {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            background: white;
-            border: 1px solid #ddd;
-            border-top: none;
-            max-height: 200px;
-            overflow-y: auto;
-            z-index: 1000;
-            display: none;
-        }
+
+        /* Feed Styles */
+        .post-content { max-height: 420px; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #1b4d3e #e5e7eb; }
+        .post-content.expanded { max-height: none; }
+        .post-content::-webkit-scrollbar { width: 8px; }
+                .post-content::-webkit-scrollbar-track { background: #e5e7eb; border-radius: 4px; }
+        .post-content::-webkit-scrollbar-thumb { background: #1b4d3e; border-radius: 4px; }
+        body.dark-mode .post-content { scrollbar-color: #f1c40f #1a1a1a; }
+        body.dark-mode .post-content::-webkit-scrollbar-track { background: #1a1a1a; }
+        body.dark-mode .post-content::-webkit-scrollbar-thumb { background: #f1c40f; }
+
+        .section-separator-box { margin: 10px 0; padding: 10px 14px; background: #eaf4ff; border: 1px solid #cfe4f7; border-radius: 8px; }
+        .section-separator-box .sec-label { font-weight: bold; color: #1b4d3e; font-size: 12px; margin-bottom: 6px; }
+        .section-separator-box .sec-names { font-size: 12px; color: #333; line-height: 1.5; }
+        .sec-name { display: block; padding: 2px 0 2px 10px; }
+        body.dark-mode .section-separator-box { background: #1a2c3a; border-color: #2c4a6a; }
+        body.dark-mode .section-separator-box .sec-label { color: #f1c40f; }
+        body.dark-mode .section-separator-box .sec-names { color: #ddd; }
+
+        .course-separator-box { margin: 12px 0; padding: 12px 16px; background: #f5eafc; border: 1px solid #ddc8ea; border-radius: 8px; }
+        .course-separator-box .course-label { font-weight: bold; color: #8e44ad; font-size: 13px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #ddc8ea; }
+        .course-separator-box .course-subgroup { margin: 8px 0 8px 12px; padding: 6px 10px; background: #fbf6ff; border-left: 3px solid #8e44ad; border-radius: 4px; }
+        .course-separator-box .course-sub-label { font-weight: bold; color: #6c3483; font-size: 11px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .3px; }
+        .course-separator-box .course-sub-names .sec-name { font-size: 12px; color: #333; padding-left: 8px; }
+        body.dark-mode .course-separator-box { background: #241a3a; border-color: #4a3a6a; }
+        body.dark-mode .course-separator-box .course-label { color: #d5b3ff; border-bottom-color: #4a3a6a; }
+        body.dark-mode .course-separator-box .course-subgroup { background: #1a1a2a; }
+        body.dark-mode .course-separator-box .course-sub-label { color: #c39bd3; }
+        body.dark-mode .course-separator-box .course-sub-names .sec-name { color: #ddd; }
+
+        .mention-section { margin-top: 10px; padding-top: 10px; border-top: 2px dashed #ddd; font-size: 12px; color: #555; }
+        .mention-section .mention-name { font-weight: bold; color: #1b4d3e; display: block; padding: 3px 0; }
+        body.dark-mode .mention-section { border-top-color: #444; color: #ccc; }
+        body.dark-mode .mention-section .mention-name { color: #f1c40f; }
+
+        /* Mention picker */
+        .student-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #e5e7eb; border-top: none; max-height: 240px; overflow-y: auto; z-index: 9999; display: none; border-radius: 0 0 8px 8px; box-shadow: 0 8px 20px rgba(0,0,0,.12); }
         .student-suggestions.show { display: block; }
-        .student-suggestions .suggestion-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; font-size: 12px; }
-        .student-suggestions .suggestion-item:hover { background: #f0f8ff; }
-        .student-suggestions .suggestion-item .suggestion-id { color: #999; font-size: 10px; }
-        
-        .mention-tags-container {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-top: 8px;
-            padding: 8px;
-            background: #f8f9fa;
-            border-radius: 4px;
-            min-height: 40px;
-            border: 1px dashed #ddd;
-        }
-        .mention-tag-item {
-            background: #1b4d3e;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .mention-tag-item .remove-mention { cursor: pointer; color: #e74c3c; font-weight: bold; }
+        .suggestion-section-title { font-size: 10px; font-weight: bold; color: #65676b; padding: 6px 12px; background: #f3f4f6; border-bottom: 1px solid #eee; }
+        .suggestion-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+        .suggestion-item:hover { background: #f0f8ff; }
+        .suggestion-id { color: #999; font-size: 10px; }
+        .suggestion-icon { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; flex-shrink: 0; }
+        .suggestion-icon.student { background: #1b4d3e; }
+        .suggestion-icon.section { background: #3498db; }
+        .suggestion-icon.course { background: #8e44ad; }
+        body.dark-mode .student-suggestions { background: #1a1a1a; border-color: #444; }
+        body.dark-mode .suggestion-item { border-bottom-color: #333; color: #fff; }
+        body.dark-mode .suggestion-item:hover { background: #2c2c2c; }
+        body.dark-mode .suggestion-section-title { background: #0f0f0f; color: #aaa; border-color: #333; }
+
+        .mention-tag-item { background: #1b4d3e; color: #fff; padding: 4px 10px; border-radius: 999px; font-size: 11px; display: inline-flex; align-items: center; gap: 6px; }
+        .mention-tag-item.section-tag { background: #3498db; }
+        .mention-tag-item.course-tag { background: #8e44ad; }
+        .mention-tag-item .remove-mention { cursor: pointer; color: #ffb3ab; font-weight: bold; }
         .mention-tag-item .remove-mention:hover { color: #fff; background: #e74c3c; border-radius: 50%; padding: 0 4px; }
-        
-        .section-selector {
-            display: flex;
-            gap: 10px;
-            align-items: flex-end;
-            flex-wrap: wrap;
-        }
-        .section-selector select {
-            flex: 1;
-            min-width: 100px;
-        }
-        .section-selector .btn {
-            flex: 0 0 auto;
-        }
-        .section-info {
-            margin-top: 8px;
-            font-size: 11px;
-            color: #27ae60;
-            background: #e8f5e9;
-            padding: 6px 12px;
-            border-radius: 4px;
-            display: none;
-        }
-        .section-info.show {
-            display: block;
-        }
-        
-        .note-post {
-            background: white;
-            border: 1px solid #e8e8e8;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            padding: 16px 20px;
-            transition: all 0.3s;
-        }
-        .note-post:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-        .note-post .post-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
-        .note-post .post-office { font-weight: bold; color: #1b4d3e; font-size: 14px; }
-        .note-post .post-office i { color: #1b4d3e; margin-right: 5px; }
-        .note-post .post-subject {
-            font-size: 20px;
-            font-weight: bold;
-            color: #1b4d3e;
-            margin-bottom: 6px;
-            padding: 8px 12px;
-            background: #f0f8ff;
-            border-radius: 4px;
-            border-left: 4px solid #1b4d3e;
-        }
-        .note-post .post-content {
-            font-size: 13px;
-            color: #333;
-            line-height: 1.6;
-            margin-bottom: 10px;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 4px;
-            word-wrap: break-word;
-            max-height: 300px;
-            overflow: hidden;
-            position: relative;
-        }
-        .note-post .post-content.expanded { max-height: none; }
-        .note-post .post-content .mention-section {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 2px dashed #ddd;
-            font-size: 12px;
-            color: #555;
-        }
-        .note-post .post-content .mention-section .mention-name { font-weight: bold; color: #1b4d3e; }
-        .post-meta { font-size: 11px; color: #999; display: flex; gap: 15px; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }
-        .post-viewers { font-size: 10px; color: #666; margin-top: 5px; padding-top: 5px; border-top: 1px solid #eee; }
-        .mention-tag { background: #f1c40f; color: #000; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; display: inline-block; }
-        .section-badge { background: #3498db; color: white; padding: 2px 10px; border-radius: 12px; font-size: 10px; display: inline-block; }
-        
-        .see-more-btn {
-            display: block;
-            text-align: center;
-            padding: 5px;
-            background: #f0f0f0;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            color: #1b4d3e;
-            margin-top: 5px;
-        }
-        .see-more-btn:hover { background: #e0e0e0; }
-        
-        .error { background: #f8d7da; color: #721c24; padding: 10px; margin-bottom: 15px; border-left: 3px solid #e74c3c; }
-        .success { background: #d4edda; color: #155724; padding: 10px; margin-bottom: 15px; border-left: 3px solid #27ae60; }
-        
+
+        .mode-btn.active { background: #1b4d3e; color: #fff; }
+        .mode-btn.course-mode.active { background: #8e44ad; color: #fff; }
+        body.dark-mode .mode-btn.active { background: #f1c40f; color: #000; }
+        body.dark-mode .mode-btn.course-mode.active { background: #b07ad1; color: #fff; }
+
+        /* Modal & Dark Mode Overrides */
+        #noteModal { display: none; }
+        #noteModal.open { display: flex; }
+        body.modal-open { overflow: hidden; }
+
         body.dark-mode { background: #0a0a0a; }
         body.dark-mode .main-content { background: #0a0a0a; }
         body.dark-mode .dashboard-header-bar,
-        body.dark-mode .content-card,
         body.dark-mode .note-post { background: #1a1a1a; border-color: #333; color: #fff; }
         body.dark-mode .dashboard-header-bar h2 { color: #f1c40f; }
-        body.dark-mode .note-post .post-subject { background: #1a3a2a; color: #f1c40f; border-left-color: #f1c40f; }
-        body.dark-mode .note-post .post-content { background: #2c2c2c; color: #fff; }
-        body.dark-mode .note-post .post-meta { color: #aaa; }
-        body.dark-mode .note-post .post-viewers { border-top-color: #333; color: #aaa; }
-        body.dark-mode input, body.dark-mode select, body.dark-mode textarea { background: #2c2c2c; border-color: #444; color: #fff; }
-        body.dark-mode .student-suggestions { background: #1a1a1a; border-color: #444; }
-        body.dark-mode .student-suggestions .suggestion-item { border-bottom-color: #333; color: #fff; }
-        body.dark-mode .student-suggestions .suggestion-item:hover { background: #2c2c2c; }
-        body.dark-mode .mention-tags-container { background: #2c2c2c; border-color: #444; }
-        body.dark-mode .see-more-btn { background: #2c2c2c; color: #f1c40f; }
-        body.dark-mode .see-more-btn:hover { background: #3c3c3c; }
-        body.dark-mode .section-info { background: #1a3a2a; color: #f1c40f; }
+        body.dark-mode .bg-white { background-color: #1a1a1a !important; }
+        body.dark-mode .bg-gray-50 { background-color: #222 !important; }
+        body.dark-mode .bg-gray-100 { background-color: #2c2c2c !important; }
+        body.dark-mode .text-gray-800, body.dark-mode .text-gray-700 { color: #eee !important; }
+        body.dark-mode .border-gray-200, body.dark-mode .border-gray-300 { border-color: #333 !important; }
+        body.dark-mode #noteModal > div { background: #1a1a1a; border-color: #333; }
         
         @media (max-width: 768px) {
             .office-sidebar { width: 100%; position: relative; height: auto; }
             .main-content { margin-left: 0; }
-            .section-selector { flex-direction: column; align-items: stretch; }
-            .section-selector select { flex: 1; }
-            .section-selector .btn { width: 100%; }
         }
     </style>
 </head>
-<body>
+<body class="font-serif text-gray-800 dark:text-gray-100">
 
+<!-- ============ HEADER ============ -->
 <div class="header">
     <div class="header-logo">
         <img src="https://tse4.mm.bing.net/th/id/OIP._MzqqLuZngO_bDcppKr1wAHaHa?pid=Api&h=220&P=0" alt="CHMSU Logo">
     </div>
     <div class="header-title">
         <h1>CARLOS HILADO MEMORIAL STATE UNIVERSITY</h1>
-        <p>CLEARANCE SYSTEM | <?php echo strtoupper($office); ?> Portal - Advisories</p>
+        <p>CLEARANCE SYSTEM | <?php echo strtoupper($office); ?> Portal - Feed Updates</p>
     </div>
-    <button class="dark-mode-toggle" onclick="toggleDarkMode()">Dark Mode</button>
-    <button onclick="confirmLogout()" class="logout-btn">Logout</button>
+    <button class="dark-mode-toggle" onclick="toggleDarkMode()">
+        <i data-lucide="moon" style="width:14px;height:14px;"></i> Dark Mode
+    </button>
+    <button onclick="confirmLogout()" class="logout-btn">
+        <i data-lucide="log-out" style="width:14px;height:14px;"></i> Logout
+    </button>
 </div>
 
 <div class="dashboard-wrapper">
+    <!-- ============ SIDEBAR ============ -->
     <div class="office-sidebar">
         <div class="sidebar-header">
             <h3><?php echo htmlspecialchars($office); ?> Portal</h3>
             <p>Clearance Management</p>
         </div>
         <ul class="sidebar-menu">
-            <li><a href="?officesection=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-            <li><a href="?officesection=note" class="active"><i class="fas fa-rss"></i> Feed Updates</a></li>
-            <li><a href="?officesection=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
-            <li><a href="?officesection=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
+            <li>
+                <a href="?officesection=dashboard">
+                    <i class="fas fa-tachometer-alt"></i> Dashboard
+                </a>
+            </li>
+            <li>
+                <a href="?officesection=note" class="active">
+                    <i class="fas fa-rss"></i> Feed Updates
+                </a>
+            </li>
+            <li>
+                <a href="?officesection=clearance">
+                    <i class="fas fa-clipboard-check"></i> Clearance
+                </a>
+            </li>
+            <li>
+                <a href="?officesection=reports">
+                    <i class="fas fa-chart-bar"></i> Reports
+                </a>
+            </li>
+            <li>
+                <a href="?officesection=chat" class="chat-link">
+                    <i class="fas fa-comment"></i> Messages
+                    <?php if ($chat_unread_count > 0): ?>
+                        <span class="chat-badge"><?php echo $chat_unread_count; ?></span>
+                    <?php endif; ?>
+                </a>
+            </li>
             <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
-                <a href="#" onclick="confirmLogout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                <a href="#" onclick="confirmLogout(); return false;">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
             </li>
         </ul>
         <div style="padding: 12px 20px; font-size: 10px; color: #dddddd; border-top: 1px solid #2d6a4f; margin-top: 20px;">
@@ -593,109 +720,64 @@ $years = [1, 2, 3, 4];
             </div>
         </div>
     </div>
-    
+
+    <!-- ============ MAIN ============ -->
     <div class="main-content">
+        <!-- Title bar -->
         <div class="dashboard-header-bar">
-            <h2><?php echo htmlspecialchars($office); ?> - Post Advisories</h2>
-            <span><?php echo date('F d, Y'); ?></span>
+            <h2><?php echo htmlspecialchars($office); ?> - Feed Updates</h2>
+            <div class="flex items-center gap-3">
+                <span><?php echo date('F d, Y'); ?></span>
+                <button type="button" onclick="openNoteModal()" class="bg-[#1b4d3e] hover:bg-[#2d6a4f] text-white text-xs font-bold px-4 py-2 rounded shadow-sm flex items-center gap-2 transition-colors" style="font-family: 'Times New Roman', Times, serif;">
+                    <i class="fas fa-plus"></i> Add Notes
+                </button>
+            </div>
         </div>
-        
+
+        <!-- Active semester banner -->
+        <div style="background: linear-gradient(135deg, #1b4d3e, #2d6a4f); color: white; padding: 14px 20px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <i data-lucide="calendar-check" style="width:24px;height:24px;opacity:0.9;"></i>
+                <div>
+                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.75; font-weight: bold;">Currently Active</div>
+                    <div style="font-size: 16px; font-weight: bold; margin-top: 2px;">
+                        <?php echo htmlspecialchars($current_sy_label); ?> &nbsp;·&nbsp; <?php echo htmlspecialchars($current_sem_name); ?>
+                    </div>
+                </div>
+            </div>
+            <div style="background: rgba(255,255,255,0.15); padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="info" style="width:14px;height:14px;opacity:0.9;"></i>
+                <span>Posts here are auto-archived to this semester when a new one is set.</span>
+            </div>
+        </div>
+
         <?php if ($error): ?>
-            <div class="error"><?php echo $error; ?></div>
+            <div style="background:#f8d7da; color:#721c24; padding:10px; margin-bottom:15px; border-left:3px solid #e74c3c;"><?php echo $error; ?></div>
         <?php endif; ?>
         <?php if ($success): ?>
-            <div class="success"><?php echo $success; ?></div>
+            <div style="background:#d4edda; color:#155724; padding:10px; margin-bottom:15px; border-left:3px solid #27ae60;"><?php echo $success; ?></div>
         <?php endif; ?>
-        
-        <!-- POST ADVISORY FORM -->
-        <div class="content-card">
-            <div class="content-card-header">
-                <span><i class="fas fa-sticky-note"></i> Create New Advisory</span>
-                <span style="font-size: 11px; color: #666;">Mention students individually or by section</span>
-            </div>
-            <div class="content-card-body">
-                <form method="POST" id="noteForm">
-                    <input type="hidden" name="action" value="post_note">
-                    
-                    <div class="form-group">
-                        <label>Subject <span style="color: #e74c3c;">*</span></label>
-                        <input type="text" name="subject" placeholder="Enter subject/title" 
-                               style="font-size: 16px; font-weight: bold; padding: 10px 12px;" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Description <span style="color: #e74c3c;">*</span></label>
-                        <textarea name="content" id="postContent" placeholder="Write your advisory details here..." required style="min-height: 120px;"></textarea>
-                    </div>
-                    
-                    <!-- SECTION MENTION -->
-                    <div class="form-group">
-                        <label>Mention by Section</label>
-                        <div class="section-selector">
-                            <select name="mentioned_year" id="sectionYear">
-                                <option value="">Select Year</option>
-                                <option value="1">1st Year</option>
-                                <option value="2">2nd Year</option>
-                                <option value="3">3rd Year</option>
-                                <option value="4">4th Year</option>
-                            </select>
-                            <select name="mentioned_section" id="sectionName">
-                                <option value="">Select Section</option>
-                                <?php 
-                                $sections_list = $conn->query("SELECT DISTINCT UPPER(TRIM(section_name)) as section_name FROM chmsu_course_sections ORDER BY section_name");
-                                while ($s = $sections_list->fetch_assoc()): 
-                                ?>
-                                    <option value="<?php echo $s['section_name']; ?>"><?php echo $s['section_name']; ?></option>
-                                <?php endwhile; ?>
-                            </select>
-                            <button type="button" class="btn btn-primary" onclick="addSectionMention()">
-                                <i class="fas fa-users"></i> Add Section
-                            </button>
-                        </div>
-                        <div class="section-info" id="sectionInfo">
-                            <i class="fas fa-info-circle"></i> 
-                            All active students in the selected section will be mentioned and receive Gmail notifications.
-                        </div>
-                    </div>
-                    
-                    <!-- INDIVIDUAL MENTION -->
-                    <div class="form-group">
-                        <label>Mention Individual Students (Optional)</label>
-                        <div class="student-scanner">
-                            <input type="text" id="studentSearch" placeholder="Type student name to mention..." autocomplete="off">
-                            <div class="student-suggestions" id="studentSuggestions"></div>
-                        </div>
-                        <small style="font-size: 10px; color: #999;">Type a name and click to add. You can mention multiple students.</small>
-                        
-                        <div class="mention-tags-container" id="mentionTagsContainer">
-                            <span style="color: #999; font-size: 11px;" id="emptyMentionText">No students mentioned yet</span>
-                        </div>
-                        <input type="hidden" name="mentioned_students" id="mentionedStudents" value="">
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 10px;">
-                        <i class="fas fa-paper-plane"></i> Post & Mention Students
-                    </button>
-                    <div style="margin-top: 10px; font-size: 11px; color: #666; background: #f8f9fa; padding: 8px 12px; border-radius: 4px;">
-                        <i class="fas fa-info-circle"></i> 
-                        All mentioned students will receive notifications in their feed and via Gmail.
-                    </div>
-                </form>
-            </div>
-        </div>
-        
-        <!-- MY ADVISORIES -->
-        <div class="content-card">
-            <div class="content-card-header">
-                <span><i class="fas fa-history"></i> My Advisories</span>
-                <span style="font-size: 11px; color: #666;">
-                    <?php echo $totalPosts; ?> posts
+
+        <!-- Feed List -->
+        <div class="bg-white border border-gray-300 rounded-lg overflow-hidden mb-6">
+            <div class="bg-gray-100 px-4 py-3 border-b border-gray-300 flex items-center justify-between">
+                <span class="text-sm font-bold text-gray-800"><i class="fas fa-history text-[#1b4d3e]"></i> My Advisories — Current Semester</span>
+                <span class="text-xs text-gray-600">
+                    <span id="visibleCount"><?php echo $totalPosts; ?></span>/<?php echo $totalPosts; ?> posts
                 </span>
             </div>
-            <div class="content-card-body">
+
+            <!-- Search -->
+            <div class="px-4 py-3 border-b border-gray-300 bg-white">
+                <div class="relative">
+                    <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+                    <input type="text" id="feedSearch" placeholder="Search subject or description..." class="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:border-[#1b4d3e]" style="font-family: 'Times New Roman', Times, serif;">
+                </div>
+            </div>
+
+            <div class="p-4" id="feedList">
                 <?php if (count($allNotes) > 0): ?>
                     <?php foreach ($allNotes as $post): 
-                        // Split by ||| delimiter for proper full names
                         $mentionedNames = array();
                         if (preg_match_all('/👥 Mentioned: (.*?)(?:\n|$)/', $post['content'], $matches)) {
                             $namesStr = trim($matches[1][0]);
@@ -703,77 +785,160 @@ $years = [1, 2, 3, 4];
                                 if (strpos($namesStr, '|||') !== false) {
                                     $mentionedNames = array_map('trim', explode('|||', $namesStr));
                                 } else {
-                                    $temp = array_map('trim', explode(',', $namesStr));
-                                    $fullNames = array();
-                                    for ($i = 0; $i < count($temp); $i += 2) {
-                                        if (isset($temp[$i+1])) {
-                                            $fullNames[] = $temp[$i] . ', ' . $temp[$i+1];
-                                        } else {
-                                            $fullNames[] = $temp[$i];
-                                        }
-                                    }
-                                    $mentionedNames = $fullNames;
+                                    $mentionedNames = array_map('trim', explode(',', $namesStr));
                                 }
                             }
                         }
-                        $mentionedNames = array_values(array_unique($mentionedNames));
-                        $cleanContent = preg_replace('/\n\n👥 Mentioned: .*/', '', $post['content']);
+                        $mentionedNames = array_values(array_unique(array_filter($mentionedNames)));
+
+                        $sectionBlocks = array();
+                        if (preg_match('/=== SECTION MENTION ===(.*?)=== END SECTION ===/s', $post['content'], $smatch)) {
+                            $inner = trim($smatch[1]);
+                            $inner = str_replace("\n---SEP---", "", $inner);
+                            $lines = explode("\n", $inner);
+                            $currentLabel = '';
+                            foreach ($lines as $line) {
+                                $line = rtrim($line);
+                                if (preg_match('/^\[(.+)\]$/', trim($line), $lm)) {
+                                    $currentLabel = $lm[1];
+                                    $sectionBlocks[$currentLabel] = array();
+                                } elseif (substr($line, 0, 2) === '- ' && $currentLabel !== '') {
+                                    $sectionBlocks[$currentLabel][] = substr($line, 2);
+                                }
+                            }
+                        }
+
+                        $courseBlocks = array();
+                        if (preg_match('/=== COURSE MENTION ===(.*?)=== END COURSE ===/s', $post['content'], $cmatch)) {
+                            $cInner = trim($cmatch[1]);
+                            $cInner = str_replace("\n---SEP---", "", $cInner);
+                            $cInner = str_replace("\n---COURSE-SEP---", "", $cInner);
+                            $cLines = explode("\n", $cInner);
+                            $currentCourse = '';
+                            $currentSub = '';
+                            foreach ($cLines as $line) {
+                                $line = rtrim($line);
+                                if (preg_match('/^\{(.+)\}$/', trim($line), $cm)) {
+                                    $currentCourse = $cm[1];
+                                    $courseBlocks[$currentCourse] = array();
+                                    $currentSub = '';
+                                } elseif (preg_match('/^<(.+)>$/', trim($line), $sm)) {
+                                    $currentSub = $sm[1];
+                                    if ($currentCourse !== '') $courseBlocks[$currentCourse][$currentSub] = array();
+                                } elseif (substr($line, 0, 2) === '- ' && $currentCourse !== '' && $currentSub !== '') {
+                                    $courseBlocks[$currentCourse][$currentSub][] = substr($line, 2);
+                                }
+                            }
+                            foreach ($courseBlocks as $cName => $subs) {
+                                uksort($courseBlocks[$cName], function($a, $b) {
+                                    preg_match('/^(\d+)/', $a, $ma);
+                                    preg_match('/^(\d+)/', $b, $mb);
+                                    $ya = isset($ma[1]) ? intval($ma[1]) : 0;
+                                    $yb = isset($mb[1]) ? intval($mb[1]) : 0;
+                                    if ($ya !== $yb) return $ya - $yb;
+                                    return strcmp($a, $b);
+                                });
+                            }
+                        }
+
+                        uksort($sectionBlocks, function($a, $b) {
+                            preg_match('/(\d+)/', $a, $ma);
+                            preg_match('/(\d+)/', $b, $mb);
+                            $ya = isset($ma[1]) ? intval($ma[1]) : 0;
+                            $yb = isset($mb[1]) ? intval($mb[1]) : 0;
+                            if ($ya !== $yb) return $ya - $yb;
+                            return strcmp($a, $b);
+                        });
+
+                        $cleanContent = preg_replace('/\n\n=== SECTION MENTION ===.*?=== END SECTION ===/s', '', $post['content']);
+                        $cleanContent = preg_replace('/\n\n=== COURSE MENTION ===.*?=== END COURSE ===/s', '', $cleanContent);
+                        $cleanContent = preg_replace('/\n\n👥 Mentioned: .*/', '', $cleanContent);
+
                         $isLong = strlen($cleanContent) > 500 || substr_count($cleanContent, "\n") > 10;
+                        $searchBlob = strtolower($post['title'] . ' ' . $cleanContent);
                     ?>
-                    <div class="note-post">
-                        <div class="post-header">
-                            <div>
-                                <span class="post-office">
-                                    <i class="fas fa-building"></i> <?php echo htmlspecialchars($post['office_name']); ?>
-                                </span>
+                    <article class="note-post border border-gray-300 rounded bg-white mb-4 p-4 hover:shadow-md transition-shadow" data-search="<?php echo htmlspecialchars($searchBlob, ENT_QUOTES); ?>">
+                        <div class="flex justify-between items-start gap-3 mb-2">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="font-bold text-[#1b4d3e] text-sm"><i class="fas fa-building mr-1"></i> <?php echo htmlspecialchars($post['office_name']); ?></span>
                                 <?php if (!empty($mentionedNames)): ?>
-                                    <span class="mention-tag">
-                                        <i class="fas fa-at"></i> <?php echo count($mentionedNames); ?> mentioned
-                                    </span>
+                                    <span class="bg-[#f1c40f] text-black px-2 py-0.5 rounded-full text-[11px] font-bold"><i class="fas fa-at"></i> <?php echo count($mentionedNames); ?> individual</span>
                                 <?php endif; ?>
                             </div>
-                            <form method="POST" style="display:inline;">
+                            <form method="POST" class="inline flex-shrink-0">
                                 <input type="hidden" name="action" value="delete_note">
                                 <input type="hidden" name="note_id" value="<?php echo $post['id']; ?>">
-                                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Delete this advisory?')">
-                                    <i class="fas fa-trash"></i>
-                                </button>
+                                <button type="submit" class="bg-red-500 hover:bg-red-600 text-white px-2.5 py-1.5 text-[11px] rounded" onclick="return confirm('Delete this advisory?')"><i class="fas fa-trash"></i></button>
                             </form>
                         </div>
-                        <div class="post-subject"><?php echo htmlspecialchars($post['title']); ?></div>
-                        <div class="post-content" id="postContent_<?php echo $post['id']; ?>">
+
+                        <div class="text-lg font-bold text-[#1b4d3e] mb-2 px-3 py-2 bg-[#eef7f2] rounded border-l-4 border-[#1b4d3e] break-words">
+                            <?php echo htmlspecialchars($post['title']); ?>
+                        </div>
+
+                        <div class="post-content text-sm text-gray-800 leading-relaxed mb-2 p-3 bg-gray-50 rounded break-words" id="postContent_<?php echo $post['id']; ?>">
                             <?php echo nl2br(htmlspecialchars($cleanContent)); ?>
+
+                            <?php if (!empty($sectionBlocks)): ?>
+                                <?php foreach ($sectionBlocks as $label => $names): ?>
+                                    <div class="section-separator-box">
+                                        <div class="sec-label"><i class="fas fa-users"></i> <?php echo htmlspecialchars($label); ?></div>
+                                        <div class="sec-names">
+                                            <?php foreach ($names as $n): ?><span class="sec-name"><?php echo htmlspecialchars($n); ?></span><?php endforeach; ?>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+
+                            <?php if (!empty($courseBlocks)): ?>
+                                <?php foreach ($courseBlocks as $courseName => $subgroups): ?>
+                                    <div class="course-separator-box">
+                                        <div class="course-label"><i class="fas fa-graduation-cap"></i> <?php echo htmlspecialchars($courseName); ?></div>
+                                        <?php foreach ($subgroups as $subLabel => $names): ?>
+                                            <div class="course-subgroup">
+                                                <div class="course-sub-label"><?php echo htmlspecialchars($subLabel); ?></div>
+                                                <div class="course-sub-names">
+                                                    <?php foreach ($names as $n): ?><span class="sec-name"><?php echo htmlspecialchars($n); ?></span><?php endforeach; ?>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+
                             <?php if (!empty($mentionedNames)): ?>
                                 <div class="mention-section">
-                                    <div style="font-weight: bold; margin-bottom: 5px;">👥 Mentioned:</div>
+                                    <div style="font-weight: bold; margin-bottom: 5px;">👥 Individually Mentioned:</div>
                                     <?php foreach ($mentionedNames as $name): ?>
-                                        <div class="mention-name" style="display: block; padding: 3px 0;">
-                                            <?php echo htmlspecialchars($name); ?>
-                                        </div>
+                                        <div class="mention-name"><?php echo htmlspecialchars($name); ?></div>
                                     <?php endforeach; ?>
                                 </div>
                             <?php endif; ?>
                         </div>
+
                         <?php if ($isLong): ?>
-                            <div class="see-more-btn" onclick="toggleContent(<?php echo $post['id']; ?>)">
+                            <div class="block text-center py-1.5 bg-gray-100 hover:bg-gray-200 rounded cursor-pointer text-xs text-[#1b4d3e] mt-1" onclick="toggleContent(<?php echo $post['id']; ?>)">
                                 <span id="seeMoreText_<?php echo $post['id']; ?>">See More</span>
                             </div>
                         <?php endif; ?>
-                        <div class="post-meta">
+
+                        <div class="text-[11px] text-gray-500 flex flex-wrap gap-x-4 gap-y-1 mt-2 pt-2 border-t border-gray-200">
                             <span><i class="fas fa-calendar-alt"></i> <?php echo date('M d, Y H:i', strtotime($post['created_at'])); ?></span>
                             <span><i class="fas fa-eye"></i> <?php echo $post['view_count']; ?> views</span>
                         </div>
-                        <?php if (!empty($post['viewers'])): ?>
-                            <div class="post-viewers">
-                                <i class="fas fa-users"></i> Viewed by: <?php echo htmlspecialchars($post['viewers']); ?>
-                            </div>
-                        <?php endif; ?>
-                    </div>
+                    </article>
                     <?php endforeach; ?>
+
+                    <div id="feedNoMatch" class="hidden text-center py-10 text-gray-400">
+                        <i class="fas fa-search text-4xl mb-2"></i>
+                        <p>No advisories match your search.</p>
+                    </div>
                 <?php else: ?>
-                    <div style="text-align: center; padding: 30px; color: #999;">
-                        <i class="fas fa-sticky-note" style="font-size: 48px; margin-bottom: 10px;"></i>
-                        <p>You haven't posted any advisories yet.</p>
+                    <div class="text-center py-10 text-gray-400">
+                        <i class="fas fa-sticky-note text-5xl mb-3"></i>
+                        <p>No advisories yet for the current semester.</p>
+                        <p class="text-[11px] mt-1.5 text-gray-400">Posts made in the previous semester have been archived with it.</p>
+                        <button type="button" onclick="openNoteModal()" class="mt-4 inline-flex items-center gap-2 bg-[#1b4d3e] text-white text-xs font-bold px-4 py-2 rounded hover:bg-[#2d6a4f]"><i class="fas fa-plus"></i> Add Notes</button>
                     </div>
                 <?php endif; ?>
             </div>
@@ -781,9 +946,116 @@ $years = [1, 2, 3, 4];
     </div>
 </div>
 
+<!-- =====================================================
+     ADD NOTES MODAL
+     ===================================================== -->
+<div id="noteModal" class="fixed inset-0 z-[9999] items-start sm:items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-black/60" onclick="closeNoteModal()"></div>
+
+    <div class="relative bg-white w-full sm:max-w-3xl max-h-screen sm:max-h-[92vh] flex flex-col sm:rounded-xl shadow-2xl border border-gray-300">
+        <div class="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-gray-300 bg-gray-50 sm:rounded-t-xl">
+            <div>
+                <div class="text-sm font-bold text-[#1b4d3e]"><i class="fas fa-sticky-note"></i> Create New Advisory</div>
+                <div class="text-[11px] text-gray-500">Choose a mention mode, then search</div>
+            </div>
+            <button type="button" onclick="closeNoteModal()" class="w-9 h-9 rounded-full hover:bg-gray-200 text-gray-500 text-xl leading-none" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="overflow-y-auto px-4 sm:px-5 py-4">
+            <form method="POST" id="noteForm">
+                <input type="hidden" name="action" value="post_note">
+
+                <div class="mb-4">
+                    <label class="block mb-1 text-xs text-gray-700">Subject <span class="text-red-500">*</span></label>
+                    <input type="text" name="subject" placeholder="Enter subject/title" class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-base font-bold focus:outline-none focus:border-[#1b4d3e]" required>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block mb-1 text-xs text-gray-700">Description <span class="text-red-500">*</span></label>
+                    <textarea name="content" id="postContent" placeholder="Write your advisory details here..." required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-[13px] min-h-[120px] focus:outline-none focus:border-[#1b4d3e]"></textarea>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block mb-1 text-xs text-gray-700"><i class="fas fa-users"></i> Mentions</label>
+                    <div class="text-[11px] text-gray-500 mb-2">Pick a mode below. Course mode groups all students under their course → year → section automatically.</div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <span class="text-xs text-gray-700">Mention Mode</span>
+                        <div class="inline-flex bg-gray-100 border border-gray-300 rounded-full p-[3px] select-none" id="modeSegmented">
+                            <button type="button" class="mode-btn active px-3.5 py-1.5 rounded-full text-[11px] font-bold text-gray-600 inline-flex items-center gap-1.5" data-mode="student" onclick="setMentionMode('student')"><i class="fas fa-user"></i> Students</button>
+                            <button type="button" class="mode-btn px-3.5 py-1.5 rounded-full text-[11px] font-bold text-gray-600 inline-flex items-center gap-1.5" data-mode="section" onclick="setMentionMode('section')"><i class="fas fa-layer-group"></i> Sections</button>
+                            <button type="button" class="mode-btn course-mode px-3.5 py-1.5 rounded-full text-[11px] font-bold text-gray-600 inline-flex items-center gap-1.5" data-mode="course" onclick="setMentionMode('course')"><i class="fas fa-graduation-cap"></i> Courses</button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <select id="courseFilter" onchange="onCourseChange()" class="w-full sm:w-36 flex-shrink-0 px-2 py-2 text-xs border border-gray-300 rounded-lg bg-white">
+                            <option value="">All Courses</option>
+                            <?php foreach ($allCourses as $c): ?>
+                                <option value="<?php echo htmlspecialchars($c); ?>"><?php echo htmlspecialchars($c); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+
+                        <div class="student-scanner relative flex-1">
+                            <input type="text" id="mentionSearch" placeholder="Type a student name..." autocomplete="off" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-[13px] bg-white focus:outline-none focus:border-[#1b4d3e]">
+                            <div class="student-suggestions" id="mentionSuggestions"></div>
+                        </div>
+                    </div>
+
+                    <small class="block mt-1.5 text-[10px] text-gray-500" id="modeHint"><strong>Students</strong> mode — search by student name, ID, or course.</small>
+
+                    <div class="flex flex-wrap gap-1.5 mt-2 p-2 bg-gray-50 rounded-lg min-h-[40px] border border-dashed border-gray-300" id="mentionTagsContainer">
+                        <span style="color: #999; font-size: 11px;" id="emptyMentionText">No mentions yet</span>
+                    </div>
+                    <input type="hidden" name="mentioned_students" id="mentionedStudents" value="">
+                    <input type="hidden" name="mentioned_sections" id="mentionedSections" value="">
+                    <input type="hidden" name="mentioned_courses" id="mentionedCourses" value="">
+                </div>
+
+                <button type="submit" class="w-full bg-[#1b4d3e] hover:bg-[#2d6a4f] text-white py-2.5 rounded-lg text-sm font-bold"><i class="fas fa-paper-plane"></i> Post &amp; Mention Students</button>
+                <div class="mt-2.5 text-[11px] text-gray-600 bg-gray-50 px-3 py-2 rounded-lg"><i class="fas fa-info-circle"></i> All mentioned students will receive in-app notifications and Gmail alerts.</div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
+// ============================================
+// DATA
+// ============================================
 var students = <?php echo json_encode($allStudents); ?>;
+var sections = <?php echo json_encode($allSections); ?>;
+var courses  = <?php echo json_encode($allCourses); ?>;
+
 var selectedMentions = [];
+var selectedSections = [];
+var selectedCourses = [];
+var mentionMode = 'student';
+
+// ============================================
+// UI: sidebar (mobile), modal
+// ============================================
+function toggleSidebar() {
+    document.getElementById('appSidebar').classList.toggle('open');
+    document.getElementById('sidebarOverlay').classList.toggle('hidden');
+}
+
+function openNoteModal() {
+    document.getElementById('noteModal').classList.add('open');
+    document.body.classList.add('modal-open');
+    setTimeout(function () {
+        var f = document.querySelector('#noteForm input[name="subject"]');
+        if (f) f.focus();
+    }, 50);
+}
+function closeNoteModal() {
+    document.getElementById('noteModal').classList.remove('open');
+    document.body.classList.remove('modal-open');
+    document.getElementById('mentionSuggestions').classList.remove('show');
+}
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeNoteModal();
+});
 
 function toggleContent(postId) {
     var content = document.getElementById('postContent_' + postId);
@@ -797,101 +1069,163 @@ function toggleContent(postId) {
     }
 }
 
-// ============================================
-// SECTION MENTION FUNCTION - CASE INSENSITIVE
-// ============================================
-function addSectionMention() {
-    var year = document.getElementById('sectionYear').value;
-    var section = document.getElementById('sectionName').value;
-    
-    if (!year || !section) {
-        alert('Please select both Year and Section.');
-        return;
-    }
-    
-    // DEBUG: Log what we're searching for
-    console.log('Searching for students in Year:', year, 'Section:', section);
-    
-    // Find students in this section from masterlist - case insensitive, trim spaces
-    var sectionStudents = students.filter(function(s) {
-        var studentSection = s.chmsu_section ? s.chmsu_section.trim().toUpperCase() : '';
-        var searchSection = section.trim().toUpperCase();
-        var match = s.chmsu_year == year && studentSection == searchSection;
-        if (match) {
-            console.log('Found student:', s.chmsu_full_name, 'in section', studentSection);
-        }
-        return match;
-    });
-    
-    console.log('Total students found in section:', sectionStudents.length);
-    
-    if (sectionStudents.length === 0) {
-        alert('No students found in ' + year + 'th Year - ' + section + '.\n\nPlease check:\n1. The section name is correct (case insensitive)\n2. The year is correct\n3. Students are active (not archived)');
-        return;
-    }
-    
-    // Add all students from this section
-    var added = 0;
-    sectionStudents.forEach(function(s) {
-        if (selectedMentions.indexOf(s.chmsu_full_name) === -1) {
-            selectedMentions.push(s.chmsu_full_name);
-            added++;
+function setMentionMode(mode) {
+    mentionMode = mode;
+    document.querySelectorAll('#modeSegmented .mode-btn').forEach(function(btn) {
+                if (btn.dataset.mode === mode) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
         }
     });
-    
-    if (added > 0) {
-        var infoDiv = document.getElementById('sectionInfo');
-        infoDiv.classList.add('show');
-        infoDiv.innerHTML = '<i class="fas fa-check-circle"></i> Added ' + added + ' student(s) from ' + year + 'th Year - ' + section;
-        updateMentionTags();
-    } else {
-        alert('All students in this section are already mentioned.');
+
+    var searchInput = document.getElementById('mentionSearch');
+    var hint = document.getElementById('modeHint');
+
+    if (mode === 'student') {
+        searchInput.placeholder = 'Type a student name...';
+        hint.innerHTML = '<strong>Students</strong> mode — search by student name, ID, or course.';
+    } else if (mode === 'section') {
+        searchInput.placeholder = 'Type a section letter (A, B, C...)...';
+        hint.innerHTML = '<strong>Sections</strong> mode — pick a course, then type a section letter to mention whole sections across years.';
+    } else if (mode === 'course') {
+        searchInput.placeholder = 'Type a course code (e.g., BSIS)...';
+        hint.innerHTML = '<strong>Courses</strong> mode — mention an entire course. All students under it will be grouped by year & section.';
     }
+
+    searchInput.value = '';
+    document.getElementById('mentionSuggestions').classList.remove('show');
+    document.getElementById('mentionSuggestions').innerHTML = '';
 }
 
-// ============================================
-// INDIVIDUAL STUDENT MENTION
-// ============================================
-document.getElementById('studentSearch').addEventListener('input', function() {
-    var search = this.value.toLowerCase().trim();
-    var suggestions = document.getElementById('studentSuggestions');
-    
+function onCourseChange() {
+    document.getElementById('mentionSearch').dispatchEvent(new Event('input'));
+}
+
+document.getElementById('mentionSearch').addEventListener('input', function() {
+    var raw = this.value.trim();
+    var search = raw.toLowerCase();
+    var suggestions = document.getElementById('mentionSuggestions');
+    var courseFilter = document.getElementById('courseFilter').value.toUpperCase();
+
     if (search.length < 1) {
         suggestions.classList.remove('show');
         return;
     }
-    
-    var filtered = students.filter(function(s) {
-        return selectedMentions.indexOf(s.chmsu_full_name) === -1 &&
-            (s.chmsu_full_name.toLowerCase().indexOf(search) !== -1 ||
-            s.chmsu_last_name.toLowerCase().indexOf(search) !== -1 ||
-            s.chmsu_first_name.toLowerCase().indexOf(search) !== -1 ||
-            s.chmsu_student_id.indexOf(search) !== -1);
-    });
-    
-    if (filtered.length === 0) {
-        suggestions.innerHTML = '<div class="suggestion-item" style="color: #999;">No students found</div>';
-        suggestions.classList.add('show');
-        return;
-    }
-    
+
     var html = '';
-    for (var i = 0; i < Math.min(filtered.length, 10); i++) {
-        var s = filtered[i];
-        html += '<div class="suggestion-item" data-name="' + s.chmsu_full_name + '">' +
-            '<strong>' + s.chmsu_full_name + '</strong> ' +
-            '<span class="suggestion-id">(' + s.chmsu_student_id + ')</span>' +
-            (s.email ? '<span style="color: #27ae60; font-size: 9px;"> 📧</span>' : '') +
-            '</div>';
+
+    if (mentionMode === 'student') {
+        var matchedStudents = students.filter(function(s) {
+            if (courseFilter && (s.chmsu_course || '').toUpperCase() !== courseFilter) return false;
+            return selectedMentions.indexOf(s.chmsu_full_name) === -1 &&
+                (s.chmsu_full_name.toLowerCase().indexOf(search) !== -1 ||
+                 s.chmsu_last_name.toLowerCase().indexOf(search) !== -1 ||
+                 s.chmsu_first_name.toLowerCase().indexOf(search) !== -1 ||
+                 s.chmsu_student_id.indexOf(search) !== -1);
+        });
+
+        if (matchedStudents.length > 0) {
+            html += '<div class="suggestion-section-title"><i class="fas fa-user"></i> Students</div>';
+            for (var j = 0; j < Math.min(matchedStudents.length, 15); j++) {
+                var s = matchedStudents[j];
+                html += '<div class="suggestion-item" data-type="student" data-name="' + s.chmsu_full_name + '">' +
+                    '<div class="suggestion-icon student"><i class="fas fa-user"></i></div>' +
+                    '<div><strong>' + s.chmsu_full_name + '</strong> ' +
+                    '<span class="suggestion-id">(' + s.chmsu_student_id + ')</span>' +
+                    (s.email ? '<span style="color: #27ae60; font-size: 9px;"> 📧</span>' : '') +
+                    '</div></div>';
+            }
+        } else {
+            html = '<div class="suggestion-item" style="color: #999;">No students found</div>';
+        }
     }
+    else if (mentionMode === 'section') {
+        var matchedSections = sections.filter(function(sec) {
+            var yearStr = String(sec.chmsu_year).toLowerCase();
+            var sectionStr = String(sec.section_name).toLowerCase();
+            var courseStr = (sec.course_code || '').toLowerCase();
+            var combined = yearStr + sectionStr;
+
+            if (courseFilter && courseStr !== courseFilter.toLowerCase()) return false;
+
+            var alreadyAdded = selectedSections.some(function(x) {
+                return String(x.year) === String(sec.chmsu_year)
+                    && x.section === sec.section_name
+                    && (x.course || '') === (sec.course_code || '');
+            });
+            if (alreadyAdded) return false;
+
+            return yearStr.indexOf(search) !== -1
+                || sectionStr.indexOf(search) !== -1
+                || combined.indexOf(search) !== -1
+                || courseStr.indexOf(search) !== -1;
+        });
+
+        matchedSections.sort(function(a, b) {
+            if ((a.course_code || '') !== (b.course_code || '')) return (a.course_code || '').localeCompare(b.course_code || '');
+            if (String(a.chmsu_year) !== String(b.chmsu_year)) return parseInt(a.chmsu_year) - parseInt(b.chmsu_year);
+            return a.section_name.localeCompare(b.section_name);
+        });
+
+        if (matchedSections.length > 0) {
+            html += '<div class="suggestion-section-title"><i class="fas fa-layer-group"></i> Sections (Groups)</div>';
+            for (var i = 0; i < Math.min(matchedSections.length, 20); i++) {
+                var sec = matchedSections[i];
+                var courseLabel = sec.course_code ? sec.course_code + ' - ' : '';
+                var label = courseLabel + sec.chmsu_year + 'th Year - ' + sec.section_name;
+                html += '<div class="suggestion-item" data-type="section" data-year="' + sec.chmsu_year + '" data-section="' + sec.section_name + '" data-course="' + (sec.course_code || '') + '">' +
+                    '<div class="suggestion-icon section"><i class="fas fa-layer-group"></i></div>' +
+                    '<div><strong>' + label + '</strong> <span class="suggestion-id">(mention whole section)</span></div>' +
+                    '</div>';
+            }
+        } else {
+            html = '<div class="suggestion-item" style="color: #999;">No sections found</div>';
+        }
+    }
+    else if (mentionMode === 'course') {
+        var matchedCourses = courses.filter(function(c) {
+            var courseStr = String(c).toLowerCase();
+            if (courseFilter && courseStr !== courseFilter.toLowerCase()) return false;
+            var alreadyAdded = selectedCourses.some(function(x) { return x.course === c; });
+            if (alreadyAdded) return false;
+            return courseStr.indexOf(search) !== -1;
+        });
+
+        matchedCourses.sort();
+
+        if (matchedCourses.length > 0) {
+            html += '<div class="suggestion-section-title"><i class="fas fa-graduation-cap"></i> Courses</div>';
+            for (var k = 0; k < Math.min(matchedCourses.length, 20); k++) {
+                var c = matchedCourses[k];
+                var countUnderCourse = students.filter(function(s) {
+                    return (s.chmsu_course || '').toUpperCase() === c.toUpperCase();
+                }).length;
+                html += '<div class="suggestion-item" data-type="course" data-course="' + c + '">' +
+                    '<div class="suggestion-icon course"><i class="fas fa-graduation-cap"></i></div>' +
+                    '<div><strong>' + c + '</strong> ' +
+                    '<span class="suggestion-id">(' + countUnderCourse + ' student' + (countUnderCourse === 1 ? '' : 's') + ' — whole course)</span></div>' +
+                    '</div>';
+            }
+        } else {
+            html = '<div class="suggestion-item" style="color: #999;">No courses found</div>';
+        }
+    }
+
     suggestions.innerHTML = html;
     suggestions.classList.add('show');
-    
+
     suggestions.querySelectorAll('.suggestion-item').forEach(function(item) {
         item.addEventListener('click', function() {
-            var name = this.dataset.name;
-            addMention(name);
-            document.getElementById('studentSearch').value = '';
+            var type = this.dataset.type;
+            if (type === 'section') {
+                addSectionMention(this.dataset.year, this.dataset.section, this.dataset.course);
+            } else if (type === 'student') {
+                addMention(this.dataset.name);
+            } else if (type === 'course') {
+                addCourseMention(this.dataset.course);
+            }
+            document.getElementById('mentionSearch').value = '';
             suggestions.classList.remove('show');
         });
     });
@@ -901,8 +1235,6 @@ function addMention(name) {
     if (selectedMentions.indexOf(name) !== -1) return;
     selectedMentions.push(name);
     updateMentionTags();
-    // Hide section info if it was showing
-    document.getElementById('sectionInfo').classList.remove('show');
 }
 
 function removeMention(name) {
@@ -910,95 +1242,196 @@ function removeMention(name) {
     updateMentionTags();
 }
 
-function updateMentionTags() {
-    var container = document.getElementById('mentionTagsContainer');
-    var hiddenInput = document.getElementById('mentionedStudents');
-    
-    container.innerHTML = '';
-    
-    if (selectedMentions.length === 0) {
-        container.innerHTML = '<span style="color: #999; font-size: 11px;">No students mentioned yet</span>';
-        hiddenInput.value = '';
-        return;
+function addSectionMention(year, section, course) {
+    year = String(year);
+    section = String(section).toUpperCase().trim();
+    course = (course || '').toUpperCase().trim();
+
+    var exists = selectedSections.some(function(x) {
+        return String(x.year) === year && x.section === section && (x.course || '') === course;
+    });
+    if (exists) return;
+
+    var matchCount = students.filter(function(s) {
+        var studentSection = s.chmsu_section ? String(s.chmsu_section).trim().toUpperCase() : '';
+        var studentCourse = (s.chmsu_course || '').toUpperCase();
+        return String(s.chmsu_year) === year
+            && studentSection === section
+            && (!course || studentCourse === course);
+    }).length;
+
+    selectedSections.push({ year: year, section: section, course: course });
+    updateMentionTags();
+
+    if (matchCount === 0) {
+        setTimeout(function() {
+            alert('Note: No active students currently found in ' + (course ? course + ' - ' : '') + year + 'th Year - ' + section + '.');
+        }, 100);
     }
-    
-    for (var i = 0; i < selectedMentions.length; i++) {
-        var name = selectedMentions[i];
-        var tag = document.createElement('span');
-        tag.className = 'mention-tag-item';
-        tag.innerHTML = '<i class="fas fa-at"></i> ' + name +
-            '<span class="remove-mention" onclick="removeMention(\'' + name + '\')">&times;</span>';
-        container.appendChild(tag);
-    }
-    
-    hiddenInput.value = selectedMentions.join('|||');
-    console.log('Mentions saved to hidden input:', hiddenInput.value);
 }
 
-// Close suggestions when clicking outside
+function removeSection(year, section, course) {
+    year = String(year);
+    section = String(section).toUpperCase().trim();
+    course = (course || '').toUpperCase().trim();
+    selectedSections = selectedSections.filter(function(x) {
+        return !(String(x.year) === year && x.section === section && (x.course || '') === course);
+    });
+    updateMentionTags();
+}
+
+function addCourseMention(course) {
+    course = String(course).toUpperCase().trim();
+    if (course === '') return;
+
+    var exists = selectedCourses.some(function(x) { return x.course === course; });
+    if (exists) return;
+
+    var matchCount = students.filter(function(s) {
+        return (s.chmsu_course || '').toUpperCase() === course;
+    }).length;
+
+    selectedCourses.push({ course: course });
+    updateMentionTags();
+
+    if (matchCount === 0) {
+        setTimeout(function() {
+            alert('Note: No active students currently found in course ' + course + '.');
+        }, 100);
+    }
+}
+
+function removeCourse(course) {
+    course = String(course).toUpperCase().trim();
+    selectedCourses = selectedCourses.filter(function(x) { return x.course !== course; });
+    updateMentionTags();
+}
+
+function updateMentionTags() {
+    var container = document.getElementById('mentionTagsContainer');
+    var hiddenStudents = document.getElementById('mentionedStudents');
+    var hiddenSections = document.getElementById('mentionedSections');
+    var hiddenCourses = document.getElementById('mentionedCourses');
+
+    container.innerHTML = '';
+
+    if (selectedMentions.length === 0 && selectedSections.length === 0 && selectedCourses.length === 0) {
+        container.innerHTML = '<span style="color: #999; font-size: 11px;">No mentions yet</span>';
+        hiddenStudents.value = '';
+        hiddenSections.value = '';
+        hiddenCourses.value = '';
+        return;
+    }
+
+    for (var c = 0; c < selectedCourses.length; c++) {
+        var cr = selectedCourses[c];
+        var cTag = document.createElement('span');
+        cTag.className = 'mention-tag-item course-tag';
+        cTag.innerHTML = '<i class="fas fa-graduation-cap"></i> ' + cr.course +
+            '<span class="remove-mention" onclick="removeCourse(\'' + cr.course + '\')">&times;</span>';
+        container.appendChild(cTag);
+    }
+
+    for (var i = 0; i < selectedSections.length; i++) {
+        var sec = selectedSections[i];
+        var label = (sec.course ? sec.course + ' - ' : '') + sec.year + 'th Year - ' + sec.section;
+        var tag = document.createElement('span');
+        tag.className = 'mention-tag-item section-tag';
+        tag.innerHTML = '<i class="fas fa-layer-group"></i> ' + label +
+            '<span class="remove-mention" onclick="removeSection(\'' + sec.year + '\', \'' + sec.section + '\', \'' + sec.course + '\')">&times;</span>';
+        container.appendChild(tag);
+    }
+
+    for (var j = 0; j < selectedMentions.length; j++) {
+        var name = selectedMentions[j];
+        var tag2 = document.createElement('span');
+        tag2.className = 'mention-tag-item';
+        tag2.innerHTML = '<i class="fas fa-at"></i> ' + name +
+            '<span class="remove-mention" onclick="removeMention(\'' + name.replace(/'/g, "\\'") + '\')">&times;</span>';
+        container.appendChild(tag2);
+    }
+
+    hiddenStudents.value = selectedMentions.join('|||');
+    hiddenSections.value = JSON.stringify(selectedSections);
+    hiddenCourses.value = JSON.stringify(selectedCourses);
+}
+
 document.addEventListener('click', function(e) {
     var container = document.querySelector('.student-scanner');
-    if (!container.contains(e.target)) {
-        document.getElementById('studentSuggestions').classList.remove('show');
+    if (container && !container.contains(e.target)) {
+        var cs = document.getElementById('courseFilter');
+        if (!cs.contains(e.target)) {
+            document.getElementById('mentionSuggestions').classList.remove('show');
+        }
     }
 });
 
-// Form validation
 document.getElementById('noteForm').addEventListener('submit', function(e) {
     var selected = document.getElementById('mentionedStudents').value;
-    var year = document.getElementById('sectionYear').value;
-    var section = document.getElementById('sectionName').value;
-    
-    console.log('SUBMITTING - Mentions:', selected, 'Year:', year, 'Section:', section);
-    
-    // Check if either individual students or section is selected
-    if ((!selected || selected.trim() === '') && (!year || !section)) {
+    var sections = document.getElementById('mentionedSections').value;
+    var courses = document.getElementById('mentionedCourses').value;
+
+    var hasStudents = selected && selected.trim() !== '';
+    var hasSections = sections && sections !== '[]' && sections.trim() !== '';
+    var hasCourses = courses && courses !== '[]' && courses.trim() !== '';
+
+    if (!hasStudents && !hasSections && !hasCourses) {
         e.preventDefault();
-        alert('Please mention at least one student or select a section.');
+        alert('Please mention at least one student, section, or course.');
         return false;
     }
-    
-    // If section is selected but no students in that section
-    if (year && section) {
-        var sectionStudents = students.filter(function(s) {
-            var studentSection = s.chmsu_section ? s.chmsu_section.trim().toUpperCase() : '';
-            var searchSection = section.trim().toUpperCase();
-            return s.chmsu_year == year && studentSection == searchSection;
-        });
-        console.log('Form validation - Students found in section:', sectionStudents.length);
-        if (sectionStudents.length === 0) {
-            e.preventDefault();
-            alert('No active students found in ' + year + 'th Year - ' + section + '.\n\nPlease check:\n1. The section name is correct\n2. The year is correct\n3. Students are active (not archived)');
-            return false;
-        }
-    }
-    
+
     return true;
 });
 
-function toggleDarkMode() {
-    document.body.classList.toggle('dark-mode');
-    var isDarkMode = document.body.classList.contains('dark-mode');
-    localStorage.setItem('darkMode', isDarkMode);
+// ============================================
+// DARK MODE
+// ============================================
+function syncDarkButton() {
+    var isDark = document.documentElement.classList.contains('dark');
     var btn = document.querySelector('.dark-mode-toggle');
     if (btn) {
-        btn.innerHTML = isDarkMode ? '<i class="fas fa-sun"></i> Light Mode' : '<i class="fas fa-moon"></i> Dark Mode';
+        btn.innerHTML = isDark ? '<i data-lucide="sun" style="width:14px;height:14px;"></i> Light Mode' : '<i data-lucide="moon" style="width:14px;height:14px;"></i> Dark Mode';
+        lucide.createIcons();
     }
+    document.body.classList.toggle('dark-mode', isDark);
 }
 
-if (localStorage.getItem('darkMode') === 'true') {
-    document.body.classList.add('dark-mode');
-    var btn = document.querySelector('.dark-mode-toggle');
-    if (btn) {
-        btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
-    }
+function toggleDarkMode() {
+    document.documentElement.classList.toggle('dark');
+    var isDarkMode = document.documentElement.classList.contains('dark');
+    localStorage.setItem('darkMode', isDarkMode);
+    syncDarkButton();
 }
+
+syncDarkButton();
+lucide.createIcons();
 
 function confirmLogout() {
     if(confirm('Are you sure you want to logout?')) {
         window.location.href = '?logout=1';
     }
 }
+
+// ============================================
+// UI ONLY: search filter for the feed
+// ============================================
+function applyFeedSearch() {
+    var q = (document.getElementById('feedSearch').value || '').toLowerCase().trim();
+    var shown = 0;
+
+    document.querySelectorAll('#feedList .note-post').forEach(function (el) {
+        var show = !q || (el.dataset.search || '').indexOf(q) !== -1;
+        el.style.display = show ? '' : 'none';
+        if (show) shown++;
+    });
+
+    var vc = document.getElementById('visibleCount');
+    if (vc) vc.textContent = shown;
+    var nm = document.getElementById('feedNoMatch');
+    if (nm) nm.classList.toggle('hidden', shown !== 0);
+}
+document.getElementById('feedSearch').addEventListener('input', applyFeedSearch);
 </script>
 
 </body>

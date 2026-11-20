@@ -16,7 +16,122 @@ $adminSection = 'offices';
 $error = '';
 $success = '';
 
-// Handle Office actions
+// ============================================
+// OTP + DELETE HANDLERS (self-contained)
+// These make the modal flow work end-to-end
+// without touching auth.php
+// ============================================
+
+// -------- 1. SEND DELETE OTP --------
+if (isset($_POST['action']) && $_POST['action'] === 'send_delete_otp') {
+    header('Content-Type: application/json');
+
+    require_once __DIR__ . '/../../includes/otp.php';
+
+    $table = isset($_POST['table']) ? sanitize($_POST['table']) : '';
+    $item_id = isset($_POST['item_id']) ? intval($_POST['item_id']) : 0;
+
+    // Get admin email
+    $admin_data = $conn->query("SELECT email FROM chmsu_admin_users WHERE username='$admin'")->fetch_assoc();
+    $email = $admin_data ? $admin_data['email'] : '';
+
+    if (!$email) {
+        echo json_encode(['success' => false, 'message' => 'Gmail not connected. Please connect Gmail first.']);
+        exit;
+    }
+
+    $otp_code = generateOTP();
+    saveOTP($conn, $email, $otp_code, 'delete', $item_id);
+    sendOTPEmail($email, $otp_code, 'delete');
+
+    echo json_encode(['success' => true, 'message' => 'OTP sent to your Gmail']);
+    exit;
+}
+
+// -------- 2. RESEND DELETE OTP --------
+if (isset($_POST['action']) && $_POST['action'] === 'resend_delete_otp') {
+    header('Content-Type: application/json');
+
+    require_once __DIR__ . '/../../includes/otp.php';
+
+    $table = isset($_POST['table']) ? sanitize($_POST['table']) : '';
+    $item_id = isset($_POST['item_id']) ? intval($_POST['item_id']) : 0;
+
+    $admin_data = $conn->query("SELECT email FROM chmsu_admin_users WHERE username='$admin'")->fetch_assoc();
+    $email = $admin_data ? $admin_data['email'] : '';
+
+    if (!$email) {
+        echo json_encode(['success' => false, 'message' => 'Gmail not connected.']);
+        exit;
+    }
+
+    $otp_code = generateOTP();
+    saveOTP($conn, $email, $otp_code, 'delete', $item_id);
+    sendOTPEmail($email, $otp_code, 'delete');
+
+    echo json_encode(['success' => true, 'message' => 'OTP resent']);
+    exit;
+}
+
+// -------- 3. VERIFY DELETE OTP + DELETE THE ROW --------
+if (isset($_POST['action']) && $_POST['action'] === 'verify_delete_otp') {
+    header('Content-Type: application/json');
+
+    require_once __DIR__ . '/../../includes/otp.php';
+
+    $otp_code = isset($_POST['otp_code']) ? sanitize($_POST['otp_code']) : '';
+    $table    = isset($_POST['table'])    ? sanitize($_POST['table'])    : '';
+    $item_id  = isset($_POST['item_id'])  ? intval($_POST['item_id'])    : 0;
+
+    // Get admin email
+    $admin_data = $conn->query("SELECT email FROM chmsu_admin_users WHERE username='$admin'")->fetch_assoc();
+    $email = $admin_data ? $admin_data['email'] : '';
+
+    if (!$email) {
+        echo json_encode(['success' => false, 'message' => 'Gmail not connected.']);
+        exit;
+    }
+
+    // Verify OTP against chmsu_otp table
+    $result = verifyOTP($conn, $email, $otp_code, 'delete');
+
+    if (!$result['valid']) {
+        echo json_encode(['success' => false, 'message' => 'Invalid or expired OTP']);
+        exit;
+    }
+
+    // Allow-list: only delete from known tables using safe column names
+    $allowed_tables = [
+        'offices'       => ['table' => 'chmsu_offices',          'column' => 'id'],
+        'courses'       => ['table' => 'chmsu_courses',          'column' => 'id'],
+        'sections'      => ['table' => 'chmsu_course_sections',  'column' => 'id'],
+        'school_years'  => ['table' => 'chmsu_school_years',     'column' => 'id'],
+        'semesters'     => ['table' => 'chmsu_semesters',        'column' => 'id'],
+    ];
+
+    if (!isset($allowed_tables[$table])) {
+        echo json_encode(['success' => false, 'message' => 'Invalid table']);
+        exit;
+    }
+
+    $real_table  = $allowed_tables[$table]['table'];
+    $id_column   = $allowed_tables[$table]['column'];
+
+    // Perform the delete
+    $deleted = $conn->query("DELETE FROM $real_table WHERE $id_column = $item_id");
+
+    if ($deleted) {
+        logActivity($conn, $admin, 'admin', "Deleted $table ID: $item_id (OTP verified)");
+        echo json_encode(['success' => true, 'message' => 'Item deleted successfully!']);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Delete failed: ' . $conn->error]);
+    }
+    exit;
+}
+
+// ============================================
+// HANDLE ADD OFFICE
+// ============================================
 if(isset($_POST['action'])) {
     if($_POST['action'] == 'add') {
         $office_name = sanitize($_POST['office_name']);
@@ -29,7 +144,7 @@ if(isset($_POST['action'])) {
             $success = "Office added successfully!";
         }
     }
-    // DELETE is now handled by OTP verification in auth.php
+    // DELETE handled above via OTP verification
 }
 ?>
 
@@ -194,7 +309,127 @@ if(isset($_POST['action'])) {
         .success { background: #d4edda; color: #155724; padding: 10px; margin-bottom: 15px; border-left: 3px solid #27ae60; }
         
         /* ============================================ */
-        /* OTP MODAL - WIDER, SHORTER HEIGHT (SAME AS COURSES) */
+        /* CONFIRM DELETE MODAL - FIRST STEP */
+        /* ============================================ */
+        .confirm-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 99998;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(3px);
+        }
+        .confirm-modal-overlay.active { display: flex; }
+        .confirm-modal {
+            background: #ffffff;
+            max-width: 400px;
+            width: 92%;
+            padding: 22px 24px 18px 24px;
+            border-radius: 10px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+            position: relative;
+            animation: modalFadeIn 0.25s ease;
+            font-family: 'Times New Roman', Times, serif;
+            text-align: center;
+        }
+        .confirm-modal-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: #fdecea;
+            color: #e74c3c;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 12px auto;
+            font-size: 26px;
+        }
+        .confirm-modal h3 {
+            color: #1b4d3e;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 17px;
+            font-family: 'Times New Roman', Times, serif;
+        }
+        .confirm-modal p {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 6px;
+            line-height: 1.5;
+        }
+        .confirm-modal .confirm-item-name {
+            background: #f5f5f5;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #1b4d3e;
+            margin: 10px 0 18px 0;
+            border: 1px solid #e8e8e8;
+            word-break: break-word;
+        }
+        .confirm-modal .confirm-warning {
+            font-size: 11px;
+            color: #e74c3c;
+            font-style: italic;
+            margin-bottom: 16px;
+        }
+        .confirm-modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        .btn-confirm-cancel {
+            padding: 8px 22px;
+            background: #f0f0f0;
+            color: #555;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: 'Times New Roman', Times, serif;
+            transition: background 0.3s;
+            font-weight: 500;
+        }
+        .btn-confirm-cancel:hover { background: #e0e0e0; }
+        .btn-confirm-ok {
+            padding: 8px 22px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: 'Times New Roman', Times, serif;
+            transition: background 0.3s;
+            font-weight: 500;
+        }
+        .btn-confirm-ok:hover { background: #c0392b; }
+        
+        body.dark-mode .confirm-modal {
+            background: #1a1a1a;
+            color: #fff;
+        }
+        body.dark-mode .confirm-modal h3 { color: #f1c40f; }
+        body.dark-mode .confirm-modal p { color: #bbb; }
+        body.dark-mode .confirm-modal .confirm-item-name {
+            background: #2c2c2c;
+            color: #f1c40f;
+            border-color: #444;
+        }
+        body.dark-mode .btn-confirm-cancel {
+            background: #333;
+            color: #ccc;
+        }
+        body.dark-mode .btn-confirm-cancel:hover { background: #444; }
+        
+        /* ============================================ */
+        /* OTP MODAL */
         /* ============================================ */
         .otp-modal-overlay {
             display: none;
@@ -209,9 +444,7 @@ if(isset($_POST['action'])) {
             align-items: center;
             backdrop-filter: blur(3px);
         }
-        .otp-modal-overlay.active {
-            display: flex;
-        }
+        .otp-modal-overlay.active { display: flex; }
         .otp-modal {
             background: #ffffff;
             max-width: 420px;
@@ -289,7 +522,6 @@ if(isset($_POST['action'])) {
             font-family: 'Times New Roman', Times, serif;
             text-align: center;
         }
-        /* 6 OTP Boxes */
         .otp-boxes-container {
             display: flex;
             justify-content: center;
@@ -315,10 +547,6 @@ if(isset($_POST['action'])) {
             background: #ffffff;
             box-shadow: 0 0 0 2px rgba(27, 77, 62, 0.12);
         }
-        .otp-box.filled {
-            border-color: #1b4d3e;
-            background: #f0f7f5;
-        }
         .otp-box.has-value {
             border-color: #1b4d3e;
             background: #eaf3ef;
@@ -343,7 +571,6 @@ if(isset($_POST['action'])) {
             25% { transform: translateX(-4px); }
             75% { transform: translateX(4px); }
         }
-        /* OTP Actions Row */
         .otp-actions-row {
             display: flex;
             justify-content: space-between;
@@ -375,7 +602,6 @@ if(isset($_POST['action'])) {
         .btn-resend:hover { background: #1b4d3e; color: white; }
         .btn-resend:disabled { opacity: 0.4; cursor: not-allowed; }
         
-        /* Verify Row - Button with green circle status */
         .otp-verify-row {
             display: flex;
             align-items: center;
@@ -417,7 +643,6 @@ if(isset($_POST['action'])) {
             to { transform: rotate(360deg); }
         }
         
-        /* Status - Green Circle with "Sent" text */
         .otp-status-indicator {
             display: flex;
             align-items: center;
@@ -436,9 +661,7 @@ if(isset($_POST['action'])) {
             font-weight: 700;
             flex-shrink: 0;
         }
-        .otp-status-indicator .circle.show {
-            display: flex;
-        }
+        .otp-status-indicator .circle.show { display: flex; }
         .otp-status-indicator .circle.success {
             background: #27ae60;
             animation: popIn 0.3s ease;
@@ -464,15 +687,9 @@ if(isset($_POST['action'])) {
             font-family: 'Times New Roman', Times, serif;
             display: none;
         }
-        .otp-status-indicator .status-label.show {
-            display: inline;
-        }
-        .otp-status-indicator .status-label.success {
-            color: #27ae60;
-        }
-        .otp-status-indicator .status-label.error {
-            color: #e74c3c;
-        }
+        .otp-status-indicator .status-label.show { display: inline; }
+        .otp-status-indicator .status-label.success { color: #27ae60; }
+        .otp-status-indicator .status-label.error { color: #e74c3c; }
         
         .modal-footer {
             margin-top: 6px;
@@ -495,7 +712,6 @@ if(isset($_POST['action'])) {
         }
         .btn-cancel:hover { background: #e0e0e0; }
         
-        /* Dark Mode */
         body.dark-mode .otp-modal {
             background: #1a1a1a;
             color: #fff;
@@ -516,10 +732,6 @@ if(isset($_POST['action'])) {
             border-color: #f1c40f;
             background: #333;
             box-shadow: 0 0 0 2px rgba(241, 196, 15, 0.2);
-        }
-        body.dark-mode .otp-box.filled {
-            border-color: #f1c40f;
-            background: #2a3a2a;
         }
         body.dark-mode .otp-box.has-value {
             border-color: #f1c40f;
@@ -566,7 +778,7 @@ if(isset($_POST['action'])) {
         <p>CLEARANCE SYSTEM | Admin Portal</p>
     </div>
     <button class="dark-mode-toggle" onclick="toggleDarkMode()">Dark Mode</button>
-    <a href="?logout=1" class="logout-btn" style="text-decoration:none;">Logout</a>
+    <a href="?logout=1" class="logout-btn" style="text-decoration:none;" onclick="return confirm('Are you sure you want to logout?');">Logout</a>
 </div>
 
 <div class="dashboard-wrapper">
@@ -612,7 +824,7 @@ if(isset($_POST['action'])) {
             </a></li>
             
             <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
-                <a href="?logout=1">
+                <a href="?logout=1" onclick="return confirm('Are you sure you want to logout?');">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </li>
@@ -662,7 +874,7 @@ if(isset($_POST['action'])) {
                     ?>
                     <li>
                         <span><strong><?php echo htmlspecialchars($o['office_name']); ?></strong></span>
-                        <button type="button" class="btn btn-danger btn-sm" onclick="openOTPModal('offices', <?php echo $o['id']; ?>, '<?php echo addslashes($o['office_name']); ?>')">
+                        <button type="button" class="btn btn-danger btn-sm" onclick="openConfirmDelete('offices', <?php echo $o['id']; ?>, '<?php echo addslashes($o['office_name']); ?>')">
                             <i class="fas fa-trash"></i> Delete
                         </button>
                     </li>
@@ -679,7 +891,28 @@ if(isset($_POST['action'])) {
 </div>
 
 <!-- ============================================ -->
-<!-- OTP VERIFICATION MODAL - WIDER, SHORTER -->
+<!-- CONFIRM DELETE MODAL -->
+<!-- ============================================ -->
+<div class="confirm-modal-overlay" id="confirmModal">
+    <div class="confirm-modal">
+        <div class="confirm-modal-icon">
+            <i class="fas fa-exclamation-triangle"></i>
+        </div>
+        <h3>Are you sure?</h3>
+        <p>You are about to delete the following item:</p>
+        <div class="confirm-item-name" id="confirmItemName">-</div>
+        <p class="confirm-warning">
+            <i class="fas fa-info-circle"></i> This action cannot be undone. You will need to verify with OTP to proceed.
+        </p>
+        <div class="confirm-modal-buttons">
+            <button class="btn-confirm-cancel" onclick="closeConfirmDelete()">Cancel</button>
+            <button class="btn-confirm-ok" onclick="proceedToOTP()">OK, Proceed</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- OTP VERIFICATION MODAL -->
 <!-- ============================================ -->
 <div class="otp-modal-overlay" id="otpModal">
     <div class="otp-modal">
@@ -692,7 +925,6 @@ if(isset($_POST['action'])) {
         <label class="otp-item-label">Item:</label>
         <div class="otp-item-name" id="otpItemName">-</div>
         
-        <!-- 6 OTP Boxes -->
         <div class="otp-boxes-container" id="otpBoxesContainer">
             <input type="text" class="otp-box" id="otpBox1" maxlength="1" autocomplete="off">
             <input type="text" class="otp-box" id="otpBox2" maxlength="1" autocomplete="off">
@@ -711,7 +943,6 @@ if(isset($_POST['action'])) {
             </button>
         </div>
         
-        <!-- Verify Row with Green Circle Status -->
         <div class="otp-verify-row">
             <button class="btn-verify" id="verifyBtn" onclick="verifyOTP()">
                 Verify
@@ -726,12 +957,10 @@ if(isset($_POST['action'])) {
             <button class="btn-cancel" onclick="closeOTPModal()">Cancel</button>
         </div>
         
-        <!-- Hidden field to store combined OTP -->
         <input type="hidden" id="otpCodeHidden">
     </div>
 </div>
 
-<!-- Hidden form for OTP verification -->
 <form id="otpForm" method="POST" style="display:none;">
     <input type="hidden" name="action" value="verify_delete_otp">
     <input type="hidden" name="table" id="otpTable">
@@ -759,6 +988,34 @@ if(isset($_POST['action'])) {
         if (btn) {
             btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
         }
+    }
+
+    // ============================================
+    // CONFIRM DELETE MODAL
+    // ============================================
+    let pendingDeleteData = { table: '', item_id: 0, item_name: '' };
+
+    function openConfirmDelete(table, itemId, itemName) {
+        pendingDeleteData = { table: table, item_id: itemId, item_name: itemName };
+        document.getElementById('confirmItemName').textContent = itemName;
+        document.getElementById('confirmModal').classList.add('active');
+    }
+
+    function closeConfirmDelete() {
+        document.getElementById('confirmModal').classList.remove('active');
+        pendingDeleteData = { table: '', item_id: 0, item_name: '' };
+    }
+
+    function proceedToOTP() {
+        document.getElementById('confirmModal').classList.remove('active');
+        
+        const table = pendingDeleteData.table;
+        const itemId = pendingDeleteData.item_id;
+        const itemName = pendingDeleteData.item_name;
+        
+        setTimeout(function() {
+            openOTPModal(table, itemId, itemName);
+        }, 150);
     }
 
     // ============================================
@@ -961,8 +1218,19 @@ if(isset($_POST['action'])) {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'action=send_delete_otp&table=' + encodeURIComponent(table) + '&item_id=' + itemId + '&item_name=' + encodeURIComponent(itemName)
         })
-        .then(response => response.json())
-        .then(data => {
+        .then(response => response.text())
+        .then(text => {
+            console.log('sendOTP raw response:', text);
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                statusDiv.className = 'otp-status error';
+                statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Server error: ' + text.substring(0, 100);
+                setStatusIndicator('error', 'Error', 'error');
+                return;
+            }
+            
             if (data.success) {
                 statusDiv.className = 'otp-status success';
                 statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
@@ -982,6 +1250,7 @@ if(isset($_POST['action'])) {
             }
         })
         .catch(error => {
+            console.error('sendOTP fetch error:', error);
             statusDiv.className = 'otp-status error';
             statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Failed to send OTP.';
             setStatusIndicator('error', 'Error', 'error');
@@ -1071,9 +1340,24 @@ if(isset($_POST['action'])) {
             method: 'POST',
             body: formData
         })
-        .then(response => response.json())
-        .then(data => {
+        .then(response => response.text())
+        .then(text => {
+            console.log('verifyOTP raw response:', text);
             boxes.forEach(box => box.classList.remove('loading'));
+            
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                statusDiv.className = 'otp-status error';
+                statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Invalid server response.';
+                setStatusIndicator('error', 'Error', 'error');
+                verifyBtn.innerHTML = 'Verify';
+                verifyBtn.disabled = false;
+                updateVerifyButton();
+                isVerifying = false;
+                return;
+            }
             
             if (data.success) {
                 statusDiv.className = 'otp-status success';
@@ -1110,6 +1394,7 @@ if(isset($_POST['action'])) {
             }
         })
         .catch(error => {
+            console.error('verifyOTP fetch error:', error);
             boxes.forEach(box => box.classList.remove('loading'));
             statusDiv.className = 'otp-status error';
             statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Verification failed.';
@@ -1149,9 +1434,20 @@ if(isset($_POST['action'])) {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'action=resend_delete_otp&table=' + encodeURIComponent(currentDeleteData.table) + '&item_id=' + currentDeleteData.item_id + '&item_name=' + encodeURIComponent(currentDeleteData.item_name)
         })
-        .then(response => response.json())
-        .then(data => {
+        .then(response => response.text())
+        .then(text => {
+            console.log('resendOTP raw response:', text);
             document.getElementById('resendBtn').disabled = false;
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                statusDiv.className = 'otp-status error';
+                statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Server error.';
+                setStatusIndicator('error', 'Error', 'error');
+                return;
+            }
+            
             if (data.success) {
                 statusDiv.className = 'otp-status success';
                 statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> ' + data.message;
@@ -1168,6 +1464,7 @@ if(isset($_POST['action'])) {
             }
         })
         .catch(error => {
+            console.error('resendOTP fetch error:', error);
             document.getElementById('resendBtn').disabled = false;
             statusDiv.className = 'otp-status error';
             statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> Failed to resend.';
@@ -1175,7 +1472,6 @@ if(isset($_POST['action'])) {
         });
     }
 
-    // Setup OTP box event listeners
     document.addEventListener('DOMContentLoaded', function() {
         const boxes = getOtpBoxes();
         boxes.forEach((box, index) => {
@@ -1198,14 +1494,19 @@ if(isset($_POST['action'])) {
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeOTPModal();
+                closeConfirmDelete();
             }
         });
     });
 
     window.onclick = function(e) {
-        const modal = document.getElementById('otpModal');
-        if (e.target === modal) {
+        const otpModal = document.getElementById('otpModal');
+        const confirmModal = document.getElementById('confirmModal');
+        if (e.target === otpModal) {
             closeOTPModal();
+        }
+        if (e.target === confirmModal) {
+            closeConfirmDelete();
         }
     };
 </script>
