@@ -27,7 +27,7 @@ define('SMTP_FROM_NAME', 'CHMSU E-Clearance System');
 // Now accepts optional $from_email and $from_password.
 // Added an optional $debug parameter (defaults to false so it doesn't break existing calls).
 // ============================================
-function sendEmail($to_email, $to_name, $subject, $body, $is_html = true, $from_email = null, $from_password = null, $debug = false) {
+function sendEmail($to_email, $to_name, $subject, $body, $is_html = true, $from_email = null, $from_password = null, $debug = false, $attachment_path = null, $attachment_name = null, $embedded_cid = null) {
     // Use provided from credentials, otherwise fall back to defaults
     $use_from_email    = !empty($from_email)    ? $from_email    : SMTP_FROM;
     $use_from_password = !empty($from_password) ? $from_password : SMTP_PASS;
@@ -65,6 +65,16 @@ function sendEmail($to_email, $to_name, $subject, $body, $is_html = true, $from_
         // Recipients
         $mail->setFrom($use_from_email, SMTP_FROM_NAME);
         $mail->addAddress($to_email, $to_name);
+
+        // Attachment / Embedded image support
+        if (!empty($attachment_path) && file_exists($attachment_path)) {
+            $att_display_name = !empty($attachment_name) ? $attachment_name : basename($attachment_path);
+            if (!empty($embedded_cid)) {
+                $mail->addEmbeddedImage($attachment_path, $embedded_cid, $att_display_name);
+            } else {
+                $mail->addAttachment($attachment_path, $att_display_name);
+            }
+        }
 
         // Content
         $mail->isHTML($is_html);
@@ -213,11 +223,11 @@ function sendMentionNotification($student_email, $student_name, $office, $subjec
     </style></head><body>
         <div class='container'>
             <div class='header'><h2>CHMSU E-Clearance System</h2></div>
-            <div class='alarm'>🚨 YOU HAVE BEEN MENTIONED 🚨</div>
+            <div class='alarm'>YOU HAVE BEEN MENTIONED</div>
             <div class='content'>
                 <p>Hello <strong>" . htmlspecialchars($student_name) . "</strong>,</p>
                 <p>You have been <strong>mentioned</strong> by <strong>" . htmlspecialchars($office) . "</strong>:</p>
-                <div class='subject-box'><h3>📌 " . htmlspecialchars($subject_text) . "</h3></div>
+                <div class='subject-box'><h3>" . htmlspecialchars($subject_text) . "</h3></div>
                 <div class='note-box'><p>" . nl2br(htmlspecialchars($content)) . "</p></div>
                 <p style='margin-top: 10px;'>
                     $mention_chip

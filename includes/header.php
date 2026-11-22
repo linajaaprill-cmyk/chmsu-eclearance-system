@@ -1265,3 +1265,292 @@ if ($__hdr_show_messages && isset($conn)) {
 })();
 </script>
 <?php endif; ?>
+
+<!-- ============================================================ -->
+<!-- UNIVERSAL IN-SCREEN VERIFICATION MODAL (Centered Popup)      -->
+<!-- Replaces top "localhost says" dialogs with a center modal    -->
+<!-- ============================================================ -->
+<style>
+@keyframes chmsuPopIn {
+    0% { transform: scale(0.9); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+#chmsuModalOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 99999999;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(2px);
+    padding: 16px;
+    box-sizing: border-box;
+}
+#chmsuModalCard {
+    background: #ffffff;
+    border-radius: 12px;
+    width: 100%;
+    max-width: 420px;
+    padding: 24px 22px;
+    text-align: center;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+    font-family: 'Times New Roman', Times, serif;
+    animation: chmsuPopIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-sizing: border-box;
+}
+body.dark-mode #chmsuModalCard {
+    background: #242526;
+    color: #e4e6eb;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+#chmsuModalIconWrap {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: #eef7f2;
+    color: #1b4d3e;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin: 0 auto 14px auto;
+}
+body.dark-mode #chmsuModalIconWrap {
+    background: #1f3328;
+    color: #f1c40f;
+}
+#chmsuModalTitle {
+    margin: 0 0 10px 0;
+    font-size: 18px;
+    color: #1b4d3e;
+    font-weight: bold;
+}
+body.dark-mode #chmsuModalTitle {
+    color: #f1c40f;
+}
+#chmsuModalMessage {
+    margin: 0 0 22px 0;
+    font-size: 14px;
+    color: #444;
+    line-height: 1.55;
+    word-break: break-word;
+}
+body.dark-mode #chmsuModalMessage {
+    color: #ccc;
+}
+.chmsu-modal-btn {
+    padding: 9px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: bold;
+    font-family: inherit;
+    transition: background 0.15s, opacity 0.15s;
+}
+#chmsuModalCancelBtn {
+    border: 1px solid #d1d5db;
+    background: #f3f4f6;
+    color: #374151;
+}
+#chmsuModalCancelBtn:hover {
+    background: #e5e7eb;
+}
+body.dark-mode #chmsuModalCancelBtn {
+    background: #3a3b3c;
+    border-color: #555;
+    color: #eee;
+}
+#chmsuModalConfirmBtn {
+    border: none;
+    background: #1b4d3e;
+    color: #ffffff;
+}
+#chmsuModalConfirmBtn:hover {
+    background: #2d6a4f;
+}
+body.dark-mode #chmsuModalConfirmBtn {
+    background: #f1c40f;
+    color: #000;
+}
+</style>
+
+<div id="chmsuModalOverlay" role="dialog" aria-modal="true">
+    <div id="chmsuModalCard">
+        <div id="chmsuModalIconWrap">
+            <i id="chmsuModalIcon" class="fas fa-question-circle"></i>
+        </div>
+        <h3 id="chmsuModalTitle">Confirmation</h3>
+        <p id="chmsuModalMessage"></p>
+        <div id="chmsuModalActions" style="display: flex; justify-content: center; gap: 12px;">
+            <button type="button" id="chmsuModalCancelBtn" class="chmsu-modal-btn">Cancel</button>
+            <button type="button" id="chmsuModalConfirmBtn" class="chmsu-modal-btn">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    var overlay = document.getElementById('chmsuModalOverlay');
+    var card = document.getElementById('chmsuModalCard');
+    var titleEl = document.getElementById('chmsuModalTitle');
+    var msgEl = document.getElementById('chmsuModalMessage');
+    var iconEl = document.getElementById('chmsuModalIcon');
+    var cancelBtn = document.getElementById('chmsuModalCancelBtn');
+    var confirmBtn = document.getElementById('chmsuModalConfirmBtn');
+
+    var currentCallback = null;
+
+    function openModal(options) {
+        if (!overlay) overlay = document.getElementById('chmsuModalOverlay');
+        if (!overlay) return;
+
+        titleEl.textContent = options.title || 'Verification';
+        msgEl.textContent = options.message || '';
+        
+        if (options.isAlert) {
+            cancelBtn.style.display = 'none';
+            confirmBtn.textContent = options.confirmText || 'OK';
+            iconEl.className = options.icon || 'fas fa-info-circle';
+        } else {
+            cancelBtn.style.display = '';
+            cancelBtn.textContent = options.cancelText || 'Cancel';
+            confirmBtn.textContent = options.confirmText || 'Confirm';
+            iconEl.className = options.icon || 'fas fa-question-circle';
+        }
+
+        currentCallback = options.onConfirm || null;
+        overlay.style.display = 'flex';
+        confirmBtn.focus();
+    }
+
+    function closeModal() {
+        if (overlay) overlay.style.display = 'none';
+        currentCallback = null;
+    }
+
+    if (cancelBtn) cancelBtn.onclick = closeModal;
+    if (confirmBtn) {
+        confirmBtn.onclick = function() {
+            var cb = currentCallback;
+            closeModal();
+            if (typeof cb === 'function') cb();
+        };
+    }
+
+    if (overlay) {
+        overlay.onclick = function(e) {
+            if (e.target === overlay) closeModal();
+        };
+    }
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && overlay && overlay.style.display === 'flex') {
+            closeModal();
+        }
+    });
+
+    // Public in-screen functions
+    window.chmsuConfirm = function(message, onConfirm, onCancel, options) {
+        openModal({
+            title: (options && options.title) || 'Confirmation',
+            message: message,
+            isAlert: false,
+            confirmText: (options && options.confirmText) || 'Confirm',
+            cancelText: (options && options.cancelText) || 'Cancel',
+            icon: (options && options.icon) || 'fas fa-question-circle',
+            onConfirm: onConfirm
+        });
+    };
+
+    window.chmsuAlert = function(message, onOk, options) {
+        openModal({
+            title: (options && options.title) || 'Notice',
+            message: message,
+            isAlert: true,
+            confirmText: (options && options.confirmText) || 'OK',
+            icon: (options && options.icon) || 'fas fa-info-circle',
+            onConfirm: onOk
+        });
+    };
+
+    // Override confirmLogout globally
+    window.confirmLogout = function() {
+        window.chmsuConfirm('Are you sure you want to logout?', function() {
+            window.location.href = '?logout=1';
+        }, null, { title: 'Confirm Logout', icon: 'fas fa-sign-out-alt' });
+    };
+
+    // Intercept clicks on links and buttons with confirm() or logout
+    document.addEventListener('click', function(e) {
+        var el = e.target.closest('a, button, input[type="submit"]');
+        if (!el) return;
+
+        if (el.__chmsu_confirmed) {
+            delete el.__chmsu_confirmed;
+            return;
+        }
+
+        var onclickAttr = el.getAttribute('onclick') || '';
+        var isLogoutLink = (el.tagName === 'A' && el.href && el.href.indexOf('logout=1') !== -1);
+        var hasConfirm = onclickAttr.indexOf('confirm(') !== -1;
+
+        if (hasConfirm || isLogoutLink) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+
+            var msg = 'Are you sure you want to proceed?';
+            if (isLogoutLink) {
+                msg = 'Are you sure you want to logout?';
+            } else {
+                var m = onclickAttr.match(/confirm\(\s*(['"])(.*?)\1\s*\)/);
+                if (m && m[2]) msg = m[2];
+            }
+
+            window.chmsuConfirm(msg, function() {
+                el.__chmsu_confirmed = true;
+                if (el.tagName === 'A' && el.href) {
+                    window.location.href = el.href;
+                } else if (el.type === 'submit' && el.form) {
+                    var h = document.createElement('input');
+                    h.type = 'hidden';
+                    if (el.name) h.name = el.name;
+                    if (el.value) h.value = el.value;
+                    el.form.appendChild(h);
+                    el.form.submit();
+                } else {
+                    el.click();
+                }
+            });
+            return false;
+        }
+    }, true);
+
+    // Intercept form submissions with onsubmit confirm()
+    document.addEventListener('submit', function(e) {
+        var form = e.target;
+        if (!form) return;
+
+        if (form.__chmsu_confirmed) {
+            delete form.__chmsu_confirmed;
+            return;
+        }
+
+        var onsubmitAttr = form.getAttribute('onsubmit') || '';
+        if (onsubmitAttr.indexOf('confirm(') !== -1) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+
+            var msg = 'Are you sure you want to proceed?';
+            var m = onsubmitAttr.match(/confirm\(\s*(['"])(.*?)\1\s*\)/);
+            if (m && m[2]) msg = m[2];
+
+            window.chmsuConfirm(msg, function() {
+                form.__chmsu_confirmed = true;
+                form.submit();
+            });
+            return false;
+        }
+    }, true);
+})();
+</script>

@@ -61,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_password_res
         $h_esc  = $conn->real_escape_string($hashed);
 
         $conn->query("UPDATE chmsu_user_accounts
-                      SET chmsu_password = '$h_esc', is_active = 1
+                      SET chmsu_password = '$h_esc', is_active = 1, last_login = NOW()
                       WHERE chmsu_student_id = '$sid_esc'");
         $conn->query("UPDATE chmsu_password_resets
                       SET is_used = 1
@@ -69,7 +69,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_password_res
 
         logActivity($conn, $sid, 'student', 'Logged in (after admin password reset)');
         $_SESSION['student'] = $sid;
-        header("Location: " . $_SERVER['PHP_SELF'] . "?view=home");
+
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        if (!headers_sent()) {
+            header("Location: index.php?view=home");
+        }
+        echo "<script>window.location.href = 'index.php?view=home';</script>";
         exit;
     }
 }

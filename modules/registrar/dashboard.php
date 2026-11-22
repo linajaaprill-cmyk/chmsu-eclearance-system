@@ -36,13 +36,58 @@ $regularStudents = $conn->query("SELECT COUNT(*) as c FROM chmsu_students_master
 $irregularStudents = $conn->query("SELECT COUNT(*) as c FROM chmsu_students_master WHERE is_archived = 0 AND is_irregular = 1")->fetch_assoc()['c'];
 
 $totalOfficesCount = $conn->query("SELECT COUNT(*) as c FROM chmsu_offices")->fetch_assoc()['c'];
-$studentsWithCompleteClearance = $conn->query("SELECT COUNT(DISTINCT s.chmsu_student_id) as c 
-    FROM chmsu_submissions s 
-    JOIN chmsu_requirements r ON s.chmsu_requirement_id = r.chmsu_id 
-    WHERE s.chmsu_status = 'Approved' 
-    GROUP BY s.chmsu_student_id 
-    HAVING COUNT(DISTINCT r.chmsu_office) >= $totalOfficesCount")->num_rows;
-$studentsWithIncompleteClearance = $totalStudents - $studentsWithCompleteClearance;
+
+// ---- Clearance status (connected to the real Clearance / Clearance Status pages, current semester) ----
+$dashSemId = 0;
+$current_sy_label = 'N/A';
+$current_sem_name = 'N/A';
+$dashSemRow = $conn->query("SELECT s.*, sy.school_year FROM chmsu_semesters s LEFT JOIN chmsu_school_years sy ON s.school_year_id = sy.id WHERE s.is_current = 1 LIMIT 1");
+if ($dashSemRow && $dashSemRow->num_rows > 0) { 
+    $semData = $dashSemRow->fetch_assoc();
+    $dashSemId = intval($semData['id']); 
+    $current_sy_label = $semData['school_year'] ?? 'N/A';
+    $current_sem_name = $semData['semester_name'] ?? 'N/A';
+    // Ensure school year is_current is synced
+    if (!empty($semData['school_year_id'])) {
+        $syId = intval($semData['school_year_id']);
+        $conn->query("UPDATE chmsu_school_years SET is_current = (id = $syId)");
+    }
+}
+$dashHasSemCol = false;
+$dashSemChk = $conn->query("SHOW COLUMNS FROM chmsu_clearance_status LIKE 'semester_id'");
+if ($dashSemChk && $dashSemChk->num_rows > 0) { $dashHasSemCol = true; }
+$dashSemClause = ($dashHasSemCol && $dashSemId > 0) ? " AND cs.semester_id = $dashSemId " : "";
+$dashOtherOffices = intval($conn->query("SELECT COUNT(*) as c FROM chmsu_offices WHERE office_name != 'Registrar'")->fetch_assoc()['c']);
+
+// Registrar decisions (active students only)
+$registrarApproved = intval($conn->query("SELECT COUNT(DISTINCT cs.student_id) as c FROM chmsu_clearance_status cs JOIN chmsu_students_master m ON m.chmsu_student_id = cs.student_id WHERE m.is_archived = 0 AND cs.office_name = 'Registrar' AND cs.status = 'clear' $dashSemClause")->fetch_assoc()['c']);
+$registrarDeclined = intval($conn->query("SELECT COUNT(DISTINCT cs.student_id) as c FROM chmsu_clearance_status cs JOIN chmsu_students_master m ON m.chmsu_student_id = cs.student_id WHERE m.is_archived = 0 AND cs.office_name = 'Registrar' AND cs.status = 'unclear' $dashSemClause")->fetch_assoc()['c']);
+$registrarNotProcessed = max(0, $totalStudentsMaster - $registrarApproved - $registrarDeclined);
+
+// Ready for Registrar = cleared by ALL other offices
+$readyForRegistrar = 0;
+$studentsWithCompleteClearance = 0;
+if ($dashOtherOffices > 0) {
+    $readyRes = $conn->query("SELECT cs.student_id, SUM(cs.office_name != 'Registrar' AND cs.status = 'clear') AS others_clear
+                              FROM chmsu_clearance_status cs
+                              JOIN chmsu_students_master m ON m.chmsu_student_id = cs.student_id
+                              WHERE m.is_archived = 0 $dashSemClause
+                              GROUP BY cs.student_id");
+    $readyIds = [];
+    if ($readyRes) {
+        while ($rr = $readyRes->fetch_assoc()) {
+            if (intval($rr['others_clear']) >= $dashOtherOffices) { $readyIds[$rr['student_id']] = true; }
+        }
+    }
+    $readyForRegistrar = count($readyIds);
+    $fullRes = $conn->query("SELECT DISTINCT cs.student_id FROM chmsu_clearance_status cs JOIN chmsu_students_master m ON m.chmsu_student_id = cs.student_id WHERE m.is_archived = 0 AND cs.office_name = 'Registrar' AND cs.status = 'clear' $dashSemClause");
+    if ($fullRes) {
+        while ($fr = $fullRes->fetch_assoc()) {
+            if (isset($readyIds[$fr['student_id']])) { $studentsWithCompleteClearance++; }
+        }
+    }
+}
+$studentsWithIncompleteClearance = max(0, $totalStudentsMaster - $studentsWithCompleteClearance);
 
 $year1 = $conn->query("SELECT COUNT(*) as c FROM chmsu_students_master WHERE is_archived = 0 AND chmsu_year = '1'")->fetch_assoc()['c'];
 $year2 = $conn->query("SELECT COUNT(*) as c FROM chmsu_students_master WHERE is_archived = 0 AND chmsu_year = '2'")->fetch_assoc()['c'];
@@ -557,6 +602,23 @@ if (isset($_GET['gmail_connected']) && $_GET['gmail_connected'] == 1 && $has_ema
             <span><?php echo date('F d, Y'); ?></span>
         </div>
 
+        <!-- Active semester banner -->
+        <div style="background: linear-gradient(135deg, #1b4d3e, #2d6a4f); color: white; padding: 14px 20px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <i data-lucide="calendar-check" style="width:24px;height:24px;opacity:0.9;"></i>
+                <div>
+                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.75; font-weight: bold;">Currently Active</div>
+                    <div style="font-size: 16px; font-weight: bold; margin-top: 2px;">
+                        <?php echo htmlspecialchars($current_sy_label); ?> &nbsp;·&nbsp; <?php echo htmlspecialchars($current_sem_name); ?>
+                    </div>
+                </div>
+            </div>
+            <div style="background: rgba(255,255,255,0.15); padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="info" style="width:14px;height:14px;opacity:0.9;"></i>
+                <span>All statistics and student clearances reflect this active semester.</span>
+            </div>
+        </div>
+
         <?php if ($error): ?>
             <div class="error"><?php echo $error; ?></div>
         <?php endif; ?>
@@ -623,33 +685,6 @@ if (isset($_GET['gmail_connected']) && $_GET['gmail_connected'] == 1 && $has_ema
             </div>
         </div>
 
-        <!-- OVERVIEW -->
-        <div class="section-label">Overview</div>
-
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="icon-wrap"><i data-lucide="users"></i></div>
-                <div>
-                    <div class="number"><?php echo $totalStudents; ?></div>
-                    <div class="label">Registered Students</div>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="icon-wrap"><i data-lucide="file-text"></i></div>
-                <div>
-                    <div class="number"><?php echo $totalRequirements; ?></div>
-                    <div class="label">Requirements</div>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="icon-wrap"><i data-lucide="inbox"></i></div>
-                <div>
-                    <div class="number"><?php echo $totalSubmissions; ?></div>
-                    <div class="label">Submissions</div>
-                </div>
-            </div>
-        </div>
-
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="icon-wrap" style="background:#fff8e1; color:#f39c12;"><i data-lucide="clock"></i></div>
@@ -674,21 +709,54 @@ if (isset($_GET['gmail_connected']) && $_GET['gmail_connected'] == 1 && $has_ema
             </div>
         </div>
 
+        <div class="section-label">Clearance Status</div>
+
         <div class="stats-grid">
-            <div class="stat-card">
+            <a href="?section=clearance_status&view_mode=processed&filter_status=clear" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer;" title="View Approved in Clearance Status">
+                <div class="icon-wrap" style="background:#e8f5e9; color:#27ae60;"><i data-lucide="user-check"></i></div>
+                <div>
+                    <div class="number" style="color:#27ae60;"><?php echo $registrarApproved; ?></div>
+                    <div class="label">Registrar Approved</div>
+                </div>
+            </a>
+            <a href="?section=clearance_status&view_mode=processed&filter_status=unclear" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer;" title="View Declined in Clearance Status">
+                <div class="icon-wrap" style="background:#fdecea; color:#e74c3c;"><i data-lucide="user-x"></i></div>
+                <div>
+                    <div class="number" style="color:#e74c3c;"><?php echo $registrarDeclined; ?></div>
+                    <div class="label">Registrar Declined</div>
+                </div>
+            </a>
+            <a href="?section=clearance_status&view_mode=pending" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer;" title="View Pending in Clearance Status">
+                <div class="icon-wrap" style="background:#fff8e1; color:#f39c12;"><i data-lucide="hourglass"></i></div>
+                <div>
+                    <div class="number" style="color:#f39c12;"><?php echo $registrarNotProcessed; ?></div>
+                    <div class="label">Not Yet Processed</div>
+                </div>
+            </a>
+        </div>
+
+        <div class="stats-grid">
+            <a href="?section=clearance_status" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer;" title="View Clearance Status">
                 <div class="icon-wrap" style="background:#e8f5e9; color:#27ae60;"><i data-lucide="shield-check"></i></div>
                 <div>
                     <div class="number" style="color:#27ae60;"><?php echo $studentsWithCompleteClearance; ?></div>
                     <div class="label">Students Fully Cleared</div>
                 </div>
-            </div>
-            <div class="stat-card">
+            </a>
+            <a href="?section=clearance_status" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer;" title="View Clearance Status">
                 <div class="icon-wrap" style="background:#fff8e1; color:#f39c12;"><i data-lucide="shield-alert"></i></div>
                 <div>
                     <div class="number" style="color:#f39c12;"><?php echo $studentsWithIncompleteClearance; ?></div>
                     <div class="label">Students Pending Clearance</div>
                 </div>
-            </div>
+            </a>
+            <a href="?section=clearance_status&view_mode=pending" class="stat-card" style="text-decoration:none; color:inherit; cursor:pointer;" title="View Students Ready in Clearance Status">
+                <div class="icon-wrap" style="background:#e0f2fe; color:#0284c7;"><i data-lucide="clipboard-check"></i></div>
+                <div>
+                    <div class="number" style="color:#0284c7;"><?php echo $readyForRegistrar; ?></div>
+                    <div class="label">Ready for Registrar</div>
+                </div>
+            </a>
         </div>
 
         <!-- ANALYTICS - 2 CHARTS -->

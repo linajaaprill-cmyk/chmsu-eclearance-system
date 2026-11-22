@@ -218,6 +218,7 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
         .sidebar-link { display: flex; align-items: center; gap: 10px; padding: 12px 20px; color: #fff; text-decoration: none; font-size: 13px; border-bottom: 1px solid #2d6a4f; transition: background .2s, color .2s; }
         .sidebar-link:hover, .sidebar-link.active { background: #f1c40f; color: #000; }
         .sidebar-link i { width: 18px; text-align: center; }
+        .sidebar-link .chat-badge { background: #e74c3c; color: white; border-radius: 12px; padding: 2px 8px; font-size: 10px; min-width: 20px; text-align: center; margin-left: auto; }
         .sb-storage { padding: 12px 20px; font-size: 10px; color: #dddddd; border-top: 1px solid #2d6a4f; margin-top: 20px; }
         .sb-storage .bar { width: 100%; height: 3px; background: #2d6a4f; margin-top: 4px; border-radius: 2px; }
         .sb-storage .bar > div { height: 100%; background: #f1c40f; border-radius: 2px; }
@@ -322,6 +323,8 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
         .btn-export-excel:hover { background: #219a52; box-shadow: 0 4px 12px rgba(39,174,96,.3); }
         .btn-export-word { background: #1b4d3e; color: #fff; }
         .btn-export-word:hover { background: #164032; box-shadow: 0 4px 12px rgba(27,77,62,.3); }
+        .btn-export-pdf { background: #e74c3c; color: #fff; }
+        .btn-export-pdf:hover { background: #c0392b; box-shadow: 0 4px 12px rgba(231,76,60,.3); }
 
         .flatpickr-day.selected, .flatpickr-day.startRange, .flatpickr-day.endRange { background: #1b4d3e; border-color: #1b4d3e; }
         .flatpickr-day.inRange { background: #d6ebdf; border-color: #d6ebdf; box-shadow: -5px 0 0 #d6ebdf, 5px 0 0 #d6ebdf; }
@@ -363,6 +366,14 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
 
 <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()"></div>
 
+<?php
+$chat_unread_count = 0;
+$chat_res = $conn->query("SELECT SUM(office_unread) as total FROM chmsu_chat_conversations WHERE office_name='" . $conn->real_escape_string($office) . "'");
+if ($chat_res) {
+    $chat_row = $chat_res->fetch_assoc();
+    $chat_unread_count = intval($chat_row['total']);
+}
+?>
 <aside class="app-sidebar">
     <div class="sb-head">
         <h3><?php echo rpt_e($office); ?> Portal</h3>
@@ -372,7 +383,14 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
         <a href="?officesection=dashboard" class="sidebar-link"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
         <a href="?officesection=note" class="sidebar-link"><i class="fas fa-rss"></i> Feed Updates</a>
         <a href="?officesection=clearance" class="sidebar-link"><i class="fas fa-clipboard-check"></i> Clearance</a>
+        <a href="?officesection=history" class="sidebar-link"><i class="fas fa-history"></i> Clearance History</a>
         <a href="?officesection=reports" class="sidebar-link active"><i class="fas fa-chart-bar"></i> Reports</a>
+        <a href="?officesection=chat" class="sidebar-link chat-link">
+            <i class="fas fa-comment"></i> Messages
+            <?php if ($chat_unread_count > 0): ?>
+                <span class="chat-badge"><?php echo $chat_unread_count; ?></span>
+            <?php endif; ?>
+        </a>
         <a href="#" onclick="confirmLogout(); return false;" class="sidebar-link" style="margin-top:15px;border-top:1px solid #2d6a4f;"><i class="fas fa-sign-out-alt"></i> Logout</a>
     </nav>
     <div class="sb-storage">
@@ -474,6 +492,7 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
             <div class="flex flex-wrap gap-2">
                 <a href="modules/office/reports_export.php?export_report=excel&type=<?php echo $view_status === 'all' ? 'submissions' : $view_status; ?>&<?php echo $filterQS; ?>" class="btn-p" style="background:#27ae60;color:#fff;"><i class="fas fa-file-excel"></i> Excel</a>
                 <a href="modules/office/reports_export.php?export_report=word&type=<?php echo $view_status === 'all' ? 'submissions' : $view_status; ?>&<?php echo $filterQS; ?>" class="btn-p primary"><i class="fas fa-file-word"></i> Word</a>
+                <a href="modules/office/reports_export.php?export_report=pdf&type=<?php echo $view_status === 'all' ? 'submissions' : $view_status; ?>&<?php echo $filterQS; ?>" class="btn-p" style="background:#e74c3c;color:#fff;"><i class="fas fa-file-pdf"></i> PDF</a>
             </div>
         </div>
 
@@ -690,6 +709,7 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
                     <div class="report-actions">
                         <a href="modules/office/reports_export.php?export_report=excel&type=submissions<?php echo $exp; ?>" class="btn-export btn-export-excel"><i class="fas fa-file-excel"></i> Excel</a>
                         <a href="modules/office/reports_export.php?export_report=word&type=submissions<?php echo $exp; ?>" class="btn-export btn-export-word"><i class="fas fa-file-word"></i> Word</a>
+                        <a href="modules/office/reports_export.php?export_report=pdf&type=submissions<?php echo $exp; ?>" class="btn-export btn-export-pdf"><i class="fas fa-file-pdf"></i> PDF</a>
                     </div>
                 </div>
             </div>
@@ -705,6 +725,7 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
                     <div class="report-actions">
                         <a href="modules/office/reports_export.php?export_report=excel&type=pending<?php echo $exp; ?>" class="btn-export btn-export-excel"><i class="fas fa-file-excel"></i> Excel</a>
                         <a href="modules/office/reports_export.php?export_report=word&type=pending<?php echo $exp; ?>" class="btn-export btn-export-word"><i class="fas fa-file-word"></i> Word</a>
+                        <a href="modules/office/reports_export.php?export_report=pdf&type=pending<?php echo $exp; ?>" class="btn-export btn-export-pdf"><i class="fas fa-file-pdf"></i> PDF</a>
                     </div>
                 </div>
             </div>
@@ -720,6 +741,7 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
                     <div class="report-actions">
                         <a href="modules/office/reports_export.php?export_report=excel&type=approved<?php echo $exp; ?>" class="btn-export btn-export-excel"><i class="fas fa-file-excel"></i> Excel</a>
                         <a href="modules/office/reports_export.php?export_report=word&type=approved<?php echo $exp; ?>" class="btn-export btn-export-word"><i class="fas fa-file-word"></i> Word</a>
+                        <a href="modules/office/reports_export.php?export_report=pdf&type=approved<?php echo $exp; ?>" class="btn-export btn-export-pdf"><i class="fas fa-file-pdf"></i> PDF</a>
                     </div>
                 </div>
             </div>
@@ -735,6 +757,7 @@ $filterSummaryText = !empty($filterSummaryParts) ? implode('  |  ', $filterSumma
                     <div class="report-actions">
                         <a href="modules/office/reports_export.php?export_report=excel&type=declined<?php echo $exp; ?>" class="btn-export btn-export-excel"><i class="fas fa-file-excel"></i> Excel</a>
                         <a href="modules/office/reports_export.php?export_report=word&type=declined<?php echo $exp; ?>" class="btn-export btn-export-word"><i class="fas fa-file-word"></i> Word</a>
+                        <a href="modules/office/reports_export.php?export_report=pdf&type=declined<?php echo $exp; ?>" class="btn-export btn-export-pdf"><i class="fas fa-file-pdf"></i> PDF</a>
                     </div>
                 </div>
             </div>

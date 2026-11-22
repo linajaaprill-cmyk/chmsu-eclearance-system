@@ -119,6 +119,11 @@ $office_clearance_html = preg_replace_callback(
         $form_content = $matches[2];
         $form_close = $matches[3];
 
+        // Never lock revert / undo actions in processed mode!
+        if (stripos($form_open, 'revertForm') !== false || stripos($form_content, 'revert_selected') !== false) {
+            return $form_open . $form_content . $form_close;
+        }
+
         $student_id = null;
         if (preg_match('/name="(approve|decline)"\s+value="([^"]+)"/i', $form_content, $id_match)) {
             $student_id = $id_match[2];
@@ -166,6 +171,7 @@ $registrar_sidebar = '
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
             <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
             <li><a href="?section=clearance_status" class="active"><i class="fas fa-user-check"></i> Clearance Status</a></li>
+            <li><a href="?section=history"><i class="fas fa-history"></i> Clearance History</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
             <li><a href="?section=archived"><i class="fas fa-archive"></i> Archive</a></li>
             <li><a href="?section=promotion"><i class="fas fa-arrow-up"></i> Student Promotion</a></li>

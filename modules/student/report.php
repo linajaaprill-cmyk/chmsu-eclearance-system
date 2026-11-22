@@ -34,6 +34,8 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
             exportToExcelReport($data, $filename, $headers);
         } elseif ($export_type == 'word') {
             exportToWordReport($data, $filename, $headers);
+        } elseif ($export_type == 'pdf') {
+            exportToPdfReport($data, $filename, $headers, 'My Clearance Status Report');
         }
     }
     elseif ($report_type == 'submissions') {
@@ -55,6 +57,8 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
             exportToExcelReport($data, $filename, $headers);
         } elseif ($export_type == 'word') {
             exportToWordReport($data, $filename, $headers);
+        } elseif ($export_type == 'pdf') {
+            exportToPdfReport($data, $filename, $headers, 'My Submissions Report');
         }
     }
 }
@@ -180,8 +184,18 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
             text-decoration: none;
             display: inline-block;
         }
+        .btn-pdf {
+            background: #e74c3c;
+            color: white;
+            padding: 8px 15px;
+            border: none;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
         .btn-excel:hover { background: #219a52; }
         .btn-word:hover { background: #2d6a4f; }
+        .btn-pdf:hover { background: #c0392b; }
         
         @media (max-width: 768px) {
             .dark-sidebar { width: 100%; position: relative; height: auto; }
@@ -244,6 +258,7 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
                     <div class="report-actions">
                         <a href="?view=reports&export_report=excel&type=clearance" class="btn-excel">Export Excel</a>
                         <a href="?view=reports&export_report=word&type=clearance" class="btn-word">Export Word</a>
+                        <a href="?view=reports&export_report=pdf&type=clearance" class="btn-pdf">Export PDF</a>
                     </div>
                 </div>
             </div>
@@ -258,6 +273,7 @@ if (isset($_GET['export_report']) && isset($_GET['type'])) {
                     <div class="report-actions">
                         <a href="?view=reports&export_report=excel&type=submissions" class="btn-excel">Export Excel</a>
                         <a href="?view=reports&export_report=word&type=submissions" class="btn-word">Export Word</a>
+                        <a href="?view=reports&export_report=pdf&type=submissions" class="btn-pdf">Export PDF</a>
                     </div>
                 </div>
             </div>

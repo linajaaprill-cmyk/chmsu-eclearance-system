@@ -126,6 +126,228 @@ function of_courses($conn) {
     if ($q) while ($r = $q->fetch_assoc()) $courses[] = $r;
     return $courses;
 }
+
+// ---- Notify mentioned students only in chat (zero emoji in Gmail) ----
+function of_notifyMentionedStudentsInChat($conn, $office, $course, $message) {
+    if (!function_exists('sendEmail') && file_exists(__DIR__ . '/../../includes/email.php')) {
+        require_once __DIR__ . '/../../includes/email.php';
+    }
+    if (empty($course) || empty($message) || !function_exists('sendEmail')) return;
+
+    $course_esc = $conn->real_escape_string($course);
+    $mentioned = [];
+
+    // 1. Course + Year + Section (e.g. @BSIS4A, @BSIS 4A, @4A)
+    if (preg_match_all('/@\s*([A-Za-z][A-Za-z\-]{1,14}?)?\s*(\d)\s*([A-Za-z])\b/i', $message, $m1, PREG_SET_ORDER)) {
+        foreach ($m1 as $row) {
+            $y = intval($row[2]);
+            $s = strtoupper($row[3]);
+            $matchC = !empty($row[1]) ? strtoupper(trim($row[1])) : $course;
+            if ($matchC === $course) {
+                $q = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, u.email 
+                                   FROM chmsu_students_master s 
+                                   LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id 
+                                   WHERE UPPER(TRIM(s.chmsu_course))='$course_esc' AND s.chmsu_year='$y' AND UPPER(TRIM(s.chmsu_section))='$s' AND s.is_archived=0");
+                if ($q) {
+                    while ($r = $q->fetch_assoc()) $mentioned[$r['chmsu_student_id']] = $r;
+                }
+            }
+        }
+    }
+
+    // 2. Whole Year (e.g. @4th Year)
+    if (preg_match_all('/@\s*(\d)\s*(?:st|nd|rd|th)?\s*Year\b/i', $message, $m2, PREG_SET_ORDER)) {
+        foreach ($m2 as $row) {
+            $y = intval($row[1]);
+            $q = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, u.email 
+                               FROM chmsu_students_master s 
+                               LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id 
+                               WHERE UPPER(TRIM(s.chmsu_course))='$course_esc' AND s.chmsu_year='$y' AND s.is_archived=0");
+            if ($q) {
+                while ($r = $q->fetch_assoc()) $mentioned[$r['chmsu_student_id']] = $r;
+            }
+        }
+    }
+
+    // 3. Section only (e.g. @Section A, @Sec A)
+    if (preg_match_all('/@\s*Sec(?:tion)?\s*([A-Za-z])\b/i', $message, $m3, PREG_SET_ORDER)) {
+        foreach ($m3 as $row) {
+            $s = strtoupper($row[1]);
+            $q = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, u.email 
+                               FROM chmsu_students_master s 
+                               LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id 
+                               WHERE UPPER(TRIM(s.chmsu_course))='$course_esc' AND UPPER(TRIM(s.chmsu_section))='$s' AND s.is_archived=0");
+            if ($q) {
+                while ($r = $q->fetch_assoc()) $mentioned[$r['chmsu_student_id']] = $r;
+            }
+        }
+    }
+
+    // 4. Individual student ID or Name
+    if (preg_match_all('/@([A-Za-z0-9._\-]+)/', $message, $m4)) {
+        foreach ($m4[1] as $cand) {
+            $cand_e = $conn->real_escape_string($cand);
+            $q = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, u.email 
+                               FROM chmsu_students_master s 
+                               LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id 
+                               WHERE UPPER(TRIM(s.chmsu_course))='$course_esc' AND (s.chmsu_student_id='$cand_e' OR s.chmsu_last_name='$cand_e' OR s.chmsu_first_name='$cand_e') AND s.is_archived=0");
+            if ($q) {
+                while ($r = $q->fetch_assoc()) $mentioned[$r['chmsu_student_id']] = $r;
+            }
+        }
+    }
+
+    if (empty($mentioned)) return;
+
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $clean_msg = preg_replace('/[\x{1F600}-\x{1F64F}\x{1F300}-\x{1F5FF}\x{1F680}-\x{1F6FF}\x{1F1E0}-\x{1F1FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F900}-\x{1F9FF}\x{1FA70}-\x{1FAFF}]/u', '', $message);
+    $clean_msg = trim(str_replace('📎', '', $clean_msg));
+    if ($clean_msg === '') $clean_msg = '[File attachment]';
+
+    $subject = "You were mentioned by " . $office . " in Chat - CHMSU Clearance";
+
+    foreach ($mentioned as $ms) {
+        $semail = trim($ms['email'] ?? '');
+        $sname = $ms['chmsu_full_name'] ?? $ms['chmsu_student_id'];
+        $sid = $ms['chmsu_student_id'];
+
+        // In-app notification without emojis
+        $notif_title = "You were mentioned by " . $office;
+        $notif_message = "You were mentioned in " . $course . " group chat";
+        $conn->query("INSERT INTO chmsu_notifications (user_type, user_id, student_id, office_name, title, message, type, link)
+                      VALUES ('student', '$sid', '$sid', '" . $conn->real_escape_string($office) . "', '" . $conn->real_escape_string($notif_title) . "', '" . $conn->real_escape_string($notif_message) . "', 'chat', '?view=chat')");
+
+        if (!empty($semail)) {
+            $body = "<html><head><style>
+                body { font-family: 'Times New Roman', Times, serif; color: #333; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+                .header { background: #1b4d3e; color: white; padding: 15px; text-align: center; }
+                .note-box { background: #fff3cd; padding: 15px; border-left: 4px solid #f39c12; border-radius: 4px; margin: 15px 0; color: #7d5a00; font-size: 14px; }
+                .footer { text-align: center; padding: 15px; font-size: 11px; color: #888; border-top: 1px solid #ddd; margin-top: 20px; }
+                .btn { display: inline-block; background: #1b4d3e; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold; }
+            </style></head><body>
+                <div class='container'>
+                    <div class='header'><h2>CHMSU E-Clearance System</h2></div>
+                    <div style='padding:20px;'>
+                        <p>Hello <strong>" . htmlspecialchars($sname) . "</strong>,</p>
+                        <p>You were mentioned by <strong>" . htmlspecialchars($office) . "</strong> in the <strong>" . htmlspecialchars($course) . "</strong> group chat:</p>
+                        <div class='note-box'><p style='margin:0;'><strong>" . nl2br(htmlspecialchars($clean_msg)) . "</strong></p></div>
+                        <p style='margin-top:15px;'>Please log in to your student portal to view the chat and respond.</p>
+                        <p><a href='http://$host/index.php?view=chat' class='btn'>View Messages</a></p>
+                    </div>
+                    <div class='footer'><p>CHMSU E-Clearance System - Automated Notification</p></div>
+                </div>
+            </body></html>";
+
+            try { @sendEmail($semail, $sname, $subject, $body, true); } catch (Throwable $e) {}
+        }
+    }
+}
+
+// ---- Send email notification to student when office sends an individual chat message (zero emoji in Gmail) ----
+function of_notifyStudentIndividualChat($conn, $office, $student_id, $message, $file_path = '', $file_name = '', $file_type = '') {
+    if (!function_exists('sendEmail') && file_exists(__DIR__ . '/../../includes/email.php')) {
+        require_once __DIR__ . '/../../includes/email.php';
+    }
+    if (empty($office) || empty($student_id) || !function_exists('sendEmail')) return;
+
+    $st_sql = $conn->real_escape_string($student_id);
+    $stQ = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, s.chmsu_course, s.chmsu_year, s.chmsu_section, u.email 
+                         FROM chmsu_students_master s 
+                         LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id 
+                         WHERE s.chmsu_student_id = '$st_sql' LIMIT 1");
+    if (!$stQ || $stQ->num_rows == 0) return;
+    $stData = $stQ->fetch_assoc();
+
+    $student_email = trim($stData['email'] ?? '');
+    $student_name  = $stData['chmsu_full_name'] ?: $student_id;
+    $sec = trim(($stData['chmsu_course'] ?? '') . ' ' . ($stData['chmsu_year'] ?? '') . '-' . ($stData['chmsu_section'] ?? ''));
+
+    // In-app notification without emojis
+    $notif_title = "New message from " . $office;
+    $notif_message = $office . " sent you a private message in chat";
+    $conn->query("INSERT INTO chmsu_notifications (user_type, user_id, student_id, office_name, title, message, type, link)
+                  VALUES ('student', '$st_sql', '$st_sql', '" . $conn->real_escape_string($office) . "', '" . $conn->real_escape_string($notif_title) . "', '" . $conn->real_escape_string($notif_message) . "', 'chat', '?view=chat')");
+
+    if (empty($student_email)) return;
+
+    // Strip emojis for clean Gmail delivery
+    $clean_msg = preg_replace('/[\x{1F600}-\x{1F64F}\x{1F300}-\x{1F5FF}\x{1F680}-\x{1F6FF}\x{1F1E0}-\x{1F1FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F900}-\x{1F9FF}\x{1FA70}-\x{1FAFF}]/u', '', $message);
+    $clean_msg = trim(str_replace('📎', '', $clean_msg));
+    if ($clean_msg === '') $clean_msg = '[Attachment Sent]';
+
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $base_app_url = "http://" . $host . (strpos($_SERVER['REQUEST_URI'] ?? '', '/capstone') !== false ? '/capstone' : (file_exists($_SERVER['DOCUMENT_ROOT'] . '/capstone') ? '/capstone' : ''));
+
+    // Handle image or file attachments in notification
+    $is_image = false;
+    $attachment_html = '';
+    $ext = strtolower($file_type ?: pathinfo($file_name ?: $file_path, PATHINFO_EXTENSION));
+    $disk_file = '';
+    $embedded_cid = null;
+
+    if (!empty($file_path)) {
+        $candidates = [
+            $file_path,
+            __DIR__ . '/../../' . ltrim($file_path, '/'),
+            __DIR__ . '/../' . ltrim($file_path, '/'),
+            __DIR__ . '/../../uploads/' . basename($file_path),
+        ];
+        foreach ($candidates as $cand) {
+            if (file_exists($cand) && is_file($cand)) {
+                $disk_file = realpath($cand);
+                break;
+            }
+        }
+    }
+
+    if (!empty($file_path) && in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'])) {
+        $is_image = true;
+        $embedded_cid = 'chat_img_' . time() . '_' . mt_rand(100, 999);
+        $img_src = !empty($disk_file) ? "cid:$embedded_cid" : ($base_app_url . '/' . ltrim($file_path, '/'));
+        $attachment_html = "<div style='margin:14px 0; text-align:center; background:#ffffff; border:1px solid #e1e4e8; border-radius:6px; padding:12px;'>
+            <p style='margin:0 0 8px 0; font-size:12px; color:#555;'><strong>Attached Image:</strong> " . htmlspecialchars($file_name ?: basename($file_path)) . "</p>
+            <div style='display:inline-block;'>
+                <img src='$img_src' alt='Chat Image Attachment' style='max-width:100%; max-height:420px; border-radius:4px; border:1px solid #ddd; object-fit:contain;' />
+            </div>
+        </div>";
+    } elseif (!empty($file_path)) {
+        $attachment_html = "<div style='margin:12px 0; padding:10px 14px; background:#eef7f2; border-left:4px solid #1b4d3e; border-radius:4px; font-size:13px;'>
+            <strong>Attached File:</strong> " . htmlspecialchars($file_name ?: basename($file_path)) . " (" . htmlspecialchars(strtoupper($ext)) . ")
+        </div>";
+    }
+
+    $img_tag = $is_image ? " [Image Attached]" : (!empty($file_path) ? " [File Attached]" : "");
+    $subject = "New Message" . $img_tag . " from " . $office . " - CHMSU Clearance";
+
+    $chat_url = "$base_app_url/index.php?view=chat";
+
+    $body = "<html><head><style>
+        body { font-family: 'Times New Roman', Times, serif; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        .header { background: #1b4d3e; color: white; padding: 15px; text-align: center; }
+        .msg-box { background: #f8f9fa; padding: 15px; border-left: 4px solid #1b4d3e; border-radius: 4px; margin: 15px 0; font-size: 14px; }
+        .footer { text-align: center; padding: 15px; font-size: 11px; color: #888; border-top: 1px solid #ddd; margin-top: 20px; }
+        .btn { display: inline-block; background: #1b4d3e; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold; }
+    </style></head><body>
+        <div class='container'>
+            <div class='header'><h2>CHMSU E-Clearance System</h2></div>
+            <div style='padding:20px;'>
+                <p>Hello <strong>" . htmlspecialchars($student_name) . "</strong>,</p>
+                <p><strong>" . htmlspecialchars($office) . "</strong> sent you a private message in chat:</p>
+                <div class='msg-box'>
+                    <p style='margin:0;'><strong>" . nl2br(htmlspecialchars($clean_msg)) . "</strong></p>
+                </div>
+                $attachment_html
+                <p style='margin-top:15px;'>Please log in to your student portal to view the chat and reply.</p>
+                <p><a href='$chat_url' class='btn'>Open Chat</a></p>
+            </div>
+            <div class='footer'><p>CHMSU E-Clearance System - Automated Notification</p></div>
+        </div>
+    </body></html>";
+
+    try { @sendEmail($student_email, $student_name, $subject, $body, true, null, null, false, $disk_file, $file_name ?: basename($file_path), $embedded_cid); } catch (Throwable $e) {}
+}
 // Mark a course group as seen up to its newest message (never moves backwards)
 function of_mark_group_seen($conn, $office_e, $ce) {
     $latest = $conn->query("SELECT MAX(id) AS max_id FROM chmsu_group_chat_messages
@@ -265,6 +487,9 @@ if (isset($_POST['action']) && in_array($_POST['action'], ['grp_send','grp_get',
                 VALUES ('office', '$office_e', '$ce', '', '', '$office_e', '$me', '$fpe', '$fne', '$fte')");
             if (!$ok) of_out(['success' => false, 'message' => 'DB error: ' . $conn->error]);
 
+            // Notify mentioned students only (no emoji in Gmail)
+            of_notifyMentionedStudentsInChat($conn, $office_e, $course, $message);
+
             of_out(['success' => true]);
         }
 
@@ -365,6 +590,7 @@ if (isset($_POST['action'])) {
 
             $conn->query("INSERT INTO chmsu_chat_messages (sender_type, sender_id, receiver_id, message, file_path, file_name, file_type) VALUES ('office', '$office_esc', '$se', '$me', '$fpe', '$fne', '$fte')");
             $conn->query("INSERT INTO chmsu_chat_conversations (student_id, office_name, last_message, last_message_time, student_unread) VALUES ('$se', '$office_esc', '$me', NOW(), 1) ON DUPLICATE KEY UPDATE last_message='$me', last_message_time=NOW(), student_unread=student_unread+1");
+            of_notifyStudentIndividualChat($conn, $office, $student_id, $message, $file_path, $file_name, $file_type);
             echo json_encode(['success' => true]); exit;
         }
 
@@ -676,13 +902,36 @@ $suggestionCourses = array_column($courses, 'c');
 <div class="dashboard-wrapper">
     <div class="dark-sidebar">
         <div class="sidebar-header">
-            <h3><?php echo htmlspecialchars($office); ?> Portal</h3>
-            <p>Clearance Management</p>
+            <h3><?php echo (strcasecmp($office, 'Registrar') === 0) ? 'Registrar' : htmlspecialchars($office); ?> Portal</h3>
+            <p><?php echo (strcasecmp($office, 'Registrar') === 0) ? 'Student Records Management' : 'Clearance Management'; ?></p>
         </div>
         <ul class="sidebar-menu">
+        <?php if (strcasecmp($office, 'Registrar') === 0): ?>
+            <li><a href="?section=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+            <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
+            <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
+            <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
+            <li><a href="?section=history"><i class="fas fa-history"></i> Clearance History</a></li>
+            <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
+            <li><a href="?section=archived"><i class="fas fa-archive"></i> Archive</a></li>
+            <li><a href="?section=promotion"><i class="fas fa-arrow-up"></i> Student Promotion</a></li>
+            <li><a href="?section=note"><i class="fas fa-rss"></i> Feed Updates</a></li>
+            <li>
+                <a href="?section=chat" class="active">
+                    <i class="fas fa-comment-dots"></i> Messages
+                    <?php if ($chat_unread > 0): ?>
+                        <span class="sidebar-badge" id="sidebarChatBadge"><?php echo $chat_unread; ?></span>
+                    <?php endif; ?>
+                </a>
+            </li>
+            <li style="margin-top: 15px; border-top: 1px solid #2d6a4f;">
+                <a href="#" onclick="confirmLogout(); return false;"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </li>
+        <?php else: ?>
             <li><a href="?officesection=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
             <li><a href="?officesection=note"><i class="fas fa-rss"></i> Feed Updates</a></li>
             <li><a href="?officesection=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
+            <li><a href="?officesection=history"><i class="fas fa-history"></i> Clearance History</a></li>
             <li><a href="?officesection=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
             <li>
                 <a href="?officesection=chat" class="active">
@@ -697,6 +946,7 @@ $suggestionCourses = array_column($courses, 'c');
             <li style="margin-top: 15px; border-top: 1px solid #2d6a4f;">
                 <a href="#" onclick="confirmLogout(); return false;"><i class="fas fa-sign-out-alt"></i> Logout</a>
             </li>
+        <?php endif; ?>
         </ul>
         <div class="storage-info">
             <i class="fas fa-database"></i> Storage: <?php echo formatFileSize($storage_used); ?> / 100MB

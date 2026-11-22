@@ -1,4 +1,5 @@
 <?php
+if (ob_get_level() === 0) { ob_start(); }
 // ============================================
 // FIX FOR WINDOWS SESSION PERMISSION ERROR
 // ============================================
@@ -243,6 +244,42 @@ if (
 $error = '';
 $success = '';
 handleActions($conn, $error, $success);
+
+// ============================================
+// COMPLETE STUDENT PASSWORD RESET (Before header output)
+// ============================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_password_reset'])) {
+    $sid     = sanitize($_POST['pending_student_id'] ?? '');
+    $newPass = $_POST['new_password'] ?? '';
+    $confirm = $_POST['confirm_password'] ?? '';
+    $sid_esc = $conn->real_escape_string($sid);
+
+    $pending = $conn->query("SELECT id FROM chmsu_password_resets
+                             WHERE student_id = '$sid_esc' AND is_used = 0
+                             ORDER BY id DESC LIMIT 1")->fetch_assoc();
+
+    if ($pending && strlen($newPass) >= 8 && preg_match('/[A-Za-z]/', $newPass) && preg_match('/[0-9]/', $newPass) && $newPass === $confirm) {
+        $hashed = password_hash($newPass, PASSWORD_DEFAULT);
+        $h_esc  = $conn->real_escape_string($hashed);
+
+        $conn->query("UPDATE chmsu_user_accounts
+                      SET chmsu_password = '$h_esc', is_active = 1, last_login = NOW()
+                      WHERE chmsu_student_id = '$sid_esc'");
+        $conn->query("UPDATE chmsu_password_resets
+                      SET is_used = 1
+                      WHERE student_id = '$sid_esc' AND is_used = 0");
+
+        logActivity($conn, $sid, 'student', 'Logged in (after admin password reset)');
+        $_SESSION['student'] = $sid;
+
+        while (ob_get_level() > 0) { ob_end_clean(); }
+        if (!headers_sent()) {
+            header("Location: index.php?view=home");
+        }
+        echo "<script>window.location.href = 'index.php?view=home';</script>";
+        exit;
+    }
+}
 
 // ============================================
 // MASTERLIST FORM HANDLERS (Must be before header!)
@@ -560,10 +597,10 @@ if (isset($_SESSION['office']) && isset($_POST['action']) && in_array($_POST['ac
             if (strpos($mentioned_names_raw, '|||') !== false) {
                 $mentioned_names = array_map('trim', explode('|||', $mentioned_names_raw));
             } else {
-                $mentioned_names = array_filter(array_map('trim', explode(',', $mentioned_names_raw)));
+                $mentioned_names = array(trim($mentioned_names_raw));
             }
         }
-        $mentioned_names = array_values(array_unique($mentioned_names));
+        $mentioned_names = array_values(array_unique(array_filter($mentioned_names)));
 
         $mention_ids = array();
         $mention_full_names = array();
@@ -572,10 +609,14 @@ if (isset($_SESSION['office']) && isset($_POST['action']) && in_array($_POST['ac
             $student_name = trim(sanitize($student_name));
             if (empty($student_name)) continue;
 
+            $student_name_esc = $conn->real_escape_string($student_name);
             $student = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, u.email 
                                      FROM chmsu_students_master s
                                      LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id
-                                     WHERE s.chmsu_full_name = '$student_name' 
+                                     WHERE s.chmsu_full_name = '$student_name_esc'
+                                        OR s.chmsu_student_id = '$student_name_esc'
+                                        OR TRIM(CONCAT(s.chmsu_last_name, ', ', s.chmsu_first_name, ', ', s.chmsu_middle_name)) = '$student_name_esc'
+                                        OR TRIM(CONCAT(s.chmsu_last_name, ', ', s.chmsu_first_name)) = '$student_name_esc'
                                      LIMIT 1");
             if ($student && $student->num_rows > 0) {
                 $s = $student->fetch_assoc();
@@ -762,11 +803,11 @@ if (isset($_SESSION['office']) && isset($_POST['action']) && in_array($_POST['ac
                 </style></head><body>
                     <div class='container'>
                         <div class='header'><h2>CHMSU E-Clearance System</h2></div>
-                        <div class='alarm'>🚨 YOU HAVE BEEN MENTIONED 🚨</div>
+                        <div class='alarm'>YOU HAVE BEEN MENTIONED</div>
                         <div class='content'>
                             <p>Hello <strong>$sname</strong>,</p>
                             <p>You have been <strong>mentioned</strong> by <strong>$office</strong>:</p>
-                            <div class='subject-box'><h3>📌 $subject</h3></div>
+                            <div class='subject-box'><h3>$subject</h3></div>
                             <div class='note-box'><p>$content</p></div>
                             <p style='margin-top: 10px;'>
                                 <span style='background:#f1c40f;padding:2px 10px;border-radius:12px;'>@$sname</span>
@@ -802,7 +843,7 @@ if (isset($_GET['google_login']) && (isset($_SESSION['admin']) || isset($_SESSIO
     exit;
 }
 
-if (isset($_GET['google_callback'])) {
+if (isset($_GET['google_callback']) || isset($_GET['code'])) {
     require_once 'includes/google_oauth.php';
     
     $userInfo = handleGoogleCallback($conn);
@@ -1327,6 +1368,49 @@ if (isset($_POST['action']) && isset($_SESSION['student'])) {
                 logActivity($conn, $student_id, 'student', "Sent chat message to office: $office_name");
             }
         }
+
+        // Email notification to office when student chats (without emoji)
+        if (!empty($office_name) && function_exists('sendEmail')) {
+            $off_q = $conn->query("SELECT email FROM chmsu_auth_roles WHERE LOWER(chmsu_role) = LOWER('" . $conn->real_escape_string($office_name) . "') LIMIT 1");
+            if ($off_q && $off_q->num_rows > 0) {
+                $off_email = trim($off_q->fetch_assoc()['email'] ?? '');
+                if (!empty($off_email)) {
+                    $st_q = $conn->query("SELECT chmsu_full_name, chmsu_course, chmsu_year, chmsu_section FROM chmsu_students_master WHERE chmsu_student_id = '$student_id' LIMIT 1");
+                    $st_row = $st_q ? $st_q->fetch_assoc() : null;
+                    $st_name = $st_row['chmsu_full_name'] ?? $student_id;
+                    $st_sec = trim(($st_row['chmsu_course'] ?? '') . ' ' . ($st_row['chmsu_year'] ?? '') . '-' . ($st_row['chmsu_section'] ?? ''));
+
+                    $clean_msg = preg_replace('/[\x{1F600}-\x{1F64F}\x{1F300}-\x{1F5FF}\x{1F680}-\x{1F6FF}\x{1F1E0}-\x{1F1FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F900}-\x{1F9FF}\x{1FA70}-\x{1FAFF}]/u', '', $message);
+                    $clean_msg = trim(str_replace('📎', '', $clean_msg));
+                    if ($clean_msg === '') $clean_msg = '[File attachment]';
+
+                    $email_subj = "New Chat Message from " . $st_name . " - CHMSU Clearance";
+                    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+                    $chat_type_label = ($chat_type === 'group') ? 'group chat' : 'direct chat';
+                    $email_bdy = "<html><head><style>
+                        body { font-family: 'Times New Roman', Times, serif; color: #333; }
+                        .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+                        .header { background: #1b4d3e; color: white; padding: 15px; text-align: center; }
+                        .msg-box { background: #f8f9fa; padding: 15px; border-left: 4px solid #1b4d3e; border-radius: 4px; margin: 15px 0; font-size: 14px; }
+                        .footer { text-align: center; padding: 15px; font-size: 11px; color: #888; border-top: 1px solid #ddd; margin-top: 20px; }
+                        .btn { display: inline-block; background: #1b4d3e; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold; }
+                    </style></head><body>
+                        <div class='container'>
+                            <div class='header'><h2>CHMSU E-Clearance System</h2></div>
+                            <div style='padding:20px;'>
+                                <p>Dear <strong>" . htmlspecialchars($office_name) . "</strong>,</p>
+                                <p>You have received a new $chat_type_label message from student <strong>" . htmlspecialchars($st_name) . "</strong> (" . htmlspecialchars($student_id) . ($st_sec ? " - " . htmlspecialchars($st_sec) : "") . "):</p>
+                                <div class='msg-box'><p style='margin:0;'><strong>" . nl2br(htmlspecialchars($clean_msg)) . "</strong></p></div>
+                                <p style='margin-top:15px;'>Please log in to your office portal to view and reply.</p>
+                                <p><a href='http://$host/index.php?officesection=chat' class='btn'>Open Chat</a></p>
+                            </div>
+                            <div class='footer'><p>CHMSU E-Clearance System - Automated Notification</p></div>
+                        </div>
+                    </body></html>";
+                    try { @sendEmail($off_email, $office_name, $email_subj, $email_bdy, true); } catch (Throwable $e) {}
+                }
+            }
+        }
         echo json_encode(['success' => true]);
         exit;
     }
@@ -1552,7 +1636,7 @@ if (isset($_POST['action']) && isset($_SESSION['office'])) {
                         $sname = $conn->real_escape_string($sname_raw);
                         $semail = $ms['email'];
 
-                        $notif_title = "🔔 You were mentioned by $office";
+                        $notif_title = "You were mentioned by $office";
                         $notif_message = "You were mentioned in $course group chat";
                         $nt = $conn->real_escape_string($notif_title);
                         $nm = $conn->real_escape_string($notif_message);
@@ -1566,7 +1650,10 @@ if (isset($_POST['action']) && isset($_SESSION['office'])) {
                             $sname_html = htmlspecialchars($sname_raw);
                             $office_html = htmlspecialchars($office);
                             $course_html = htmlspecialchars($course);
-                            $msg_html = nl2br(htmlspecialchars($message));
+                            $clean_msg_email = preg_replace('/[\x{1F600}-\x{1F64F}\x{1F300}-\x{1F5FF}\x{1F680}-\x{1F6FF}\x{1F1E0}-\x{1F1FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F900}-\x{1F9FF}\x{1FA70}-\x{1FAFF}]/u', '', $message);
+                            $clean_msg_email = trim(str_replace('📎', '', $clean_msg_email));
+                            if ($clean_msg_email === '') $clean_msg_email = '[File attachment]';
+                            $msg_html = nl2br(htmlspecialchars($clean_msg_email));
                             $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
                             $email_message = "
                             <html><head><style>
@@ -1874,8 +1961,10 @@ elseif (isset($_SESSION['student'])) {
         include 'modules/student/dashboard.php';
     }
 }
-elseif (isset($_SESSION['office']) && $_SESSION['office'] == 'Registrar') {
-    $currentSection = isset($_GET['section']) ? $_GET['section'] : 'dashboard';
+elseif ((isset($_SESSION['office']) && strcasecmp($_SESSION['office'], 'Registrar') === 0) || (isset($_SESSION['role']) && strcasecmp($_SESSION['role'], 'registrar') === 0)) {
+    $_SESSION['office'] = 'Registrar';
+    if (!isset($_SESSION['role'])) $_SESSION['role'] = 'registrar';
+    $currentSection = isset($_GET['section']) ? $_GET['section'] : (isset($_GET['officesection']) ? $_GET['officesection'] : 'dashboard');
     
     if (isset($_GET['view_year']) && $_GET['view_year'] > 0) {
         include 'modules/registrar/archived_students.php';

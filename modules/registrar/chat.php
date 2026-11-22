@@ -33,7 +33,7 @@ $office_chat_html = ob_get_clean();
 // used across all Registrar pages, so no visual blinking)
 // ============================================================
 $registrar_sidebar = '
-    <div class="office-sidebar">
+    <div class="dark-sidebar">
         <div class="sidebar-header">
             <h3>Registrar Portal</h3>
             <p>Student Records Management</p>
@@ -43,6 +43,7 @@ $registrar_sidebar = '
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
             <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
             <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
+            <li><a href="?section=history"><i class="fas fa-history"></i> Clearance History</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
             <li><a href="?section=archived"><i class="fas fa-archive"></i> Archive</a></li>
             <li><a href="?section=promotion"><i class="fas fa-arrow-up"></i> Student Promotion</a></li>
@@ -69,7 +70,7 @@ $registrar_sidebar = '
 // and no scroll is needed.
 // ============================================================
 $office_chat_html = preg_replace(
-    '/<div class="office-sidebar">.*?(?=<div class="main-content">)/s',
+    '/<div class="(office-sidebar|dark-sidebar)">.*?(?=<div class="main-content">)/s',
     $registrar_sidebar,
     $office_chat_html,
     1

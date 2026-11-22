@@ -92,6 +92,17 @@ if ($allApproved && $show_certificate == 1) {
     $lastName = trim($nameParts[0] ?? '');
     $firstName = isset($nameParts[1]) ? trim($nameParts[1]) : '';
     $middleName = $master['chmsu_middle_name'] ?? '';
+
+    // Registrar document verification status
+    $cert_reg_verify = ['shs_sf10' => 0, 'jotr' => 0, 'psa_birth' => 0];
+    $rv_student_id = $conn->real_escape_string($_SESSION['student']);
+    $rv_q = $conn->query("SELECT shs_sf10, jotr, psa_birth FROM chmsu_registrar_verification WHERE student_id='$rv_student_id' LIMIT 1");
+    if ($rv_q && $rv_q->num_rows > 0) {
+        $cert_reg_verify = $rv_q->fetch_assoc();
+    }
+    $sf_checked   = !empty($cert_reg_verify['shs_sf10'])  ? 'checked' : '';
+    $jotr_checked = !empty($cert_reg_verify['jotr'])       ? 'checked' : '';
+    $psa_checked  = !empty($cert_reg_verify['psa_birth']) ? 'checked' : '';
 }
 ?>
 
@@ -276,6 +287,40 @@ body.dark-mode .office-box { color: white; }
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
 }
+.btn-download-pdf {
+    padding: 8px 16px;
+    background: #c0392b;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Times New Roman', Times, serif;
+    transition: all 0.25s;
+}
+.btn-download-pdf:hover {
+    background: #a93226;
+    transform: translateY(-1px);
+}
+.btn-download-pdf:disabled,
+.btn-download-pdf.loading {
+    background: #95a5a6;
+    cursor: not-allowed;
+    transform: none;
+}
+.btn-download-pdf .spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .btn-back-top {
@@ -366,8 +411,9 @@ body.dark-mode .cert-signature-line {
 }
 </style>
 
-<!-- html2canvas for Download as Image -->
+<!-- html2canvas and jsPDF for Download as Image / PDF -->
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <div class="header">
     <div class="header-logo">
@@ -422,6 +468,9 @@ body.dark-mode .cert-signature-line {
             <div class="cert-top-bar">
                 <h2><i class="fas fa-certificate"></i> Certificate of Completion</h2>
                 <div class="cert-top-actions">
+                    <button class="btn-download-pdf" id="downloadPdfBtn" onclick="downloadCertificateAsPdf()">
+                        <i class="fas fa-file-pdf"></i> Download as PDF
+                    </button>
                     <button class="btn-download-img" id="downloadImgBtn" onclick="downloadCertificateAsImage()">
                         <i class="fas fa-download"></i> Download as Image
                     </button>
@@ -540,9 +589,9 @@ body.dark-mode .cert-signature-line {
 
                 <div class="cert-docs-section">
                     <div class="cert-docs-row">
-                        <div class="cert-doc-item"><input type="checkbox" disabled> SHS SF10</div>
-                        <div class="cert-doc-item"><input type="checkbox" disabled> JOTR</div>
-                        <div class="cert-doc-item"><input type="checkbox" disabled> PSA Birth</div>
+                        <div class="cert-doc-item"><input type="checkbox" <?php echo $sf_checked; ?> disabled> SHS SF10</div>
+                        <div class="cert-doc-item"><input type="checkbox" <?php echo $jotr_checked; ?> disabled> JOTR</div>
+                        <div class="cert-doc-item"><input type="checkbox" <?php echo $psa_checked; ?> disabled> PSA Birth</div>
                     </div>
                 </div>
             </div>
@@ -624,6 +673,73 @@ body.dark-mode .cert-signature-line {
 </div>
 
 <script>
+// ============================================
+// DOWNLOAD CERTIFICATE AS PDF
+// ============================================
+function downloadCertificateAsPdf() {
+    const cert = document.getElementById('certificateToDownload');
+    const btn = document.getElementById('downloadPdfBtn');
+
+    if (!cert) {
+        alert('Certificate not found.');
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.innerHTML = '<span class="spinner"></span> Generating PDF...';
+    }
+
+    setTimeout(function () {
+        html2canvas(cert, {
+            scale: 2,
+            useCORS: true,
+            allowTaint: false,
+            backgroundColor: '#ffffff',
+            logging: false,
+            windowWidth: cert.scrollWidth,
+            windowHeight: cert.scrollHeight
+        }).then(function (canvas) {
+            const studentId = "<?php echo addslashes($student['chmsu_student_id']); ?>";
+            const fileName = 'CHMSU_Clearance_Certificate_' + studentId + '_' + Date.now() + '.pdf';
+            
+            const imgData = canvas.toDataURL('image/jpeg', 0.95);
+            if (!window.jspdf || !window.jspdf.jsPDF) {
+                // Fallback to print
+                window.print();
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    btn.innerHTML = '<i class="fas fa-file-pdf"></i> Download as PDF';
+                }
+                return;
+            }
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+            
+            pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+            pdf.save(fileName);
+
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.innerHTML = '<i class="fas fa-file-pdf"></i> Download as PDF';
+            }
+        }).catch(function (err) {
+            console.error('PDF generation error:', err);
+            alert('Could not generate PDF. Please try again or use browser Print.');
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.innerHTML = '<i class="fas fa-file-pdf"></i> Download as PDF';
+            }
+        });
+    }, 250);
+}
+
 // ============================================
 // DOWNLOAD CERTIFICATE AS IMAGE
 // ============================================

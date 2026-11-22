@@ -350,6 +350,9 @@ $tdCls   = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-[#333]';
             <a href="modules/registrar/reports_export.php?export_report=word&filter_course=<?php echo urlencode($filter_course); ?>&filter_year=<?php echo urlencode($filter_year); ?>&filter_section=<?php echo urlencode($filter_section); ?>&filter_type=<?php echo urlencode($filter_type); ?>&filter_status=<?php echo urlencode($filter_status); ?>" class="bg-brand hover:bg-brand-600 text-white px-4 py-2 text-xs rounded no-underline">
                 <i class="fas fa-file-word"></i> Export to Word
             </a>
+            <a href="modules/registrar/reports_export.php?export_report=pdf&filter_course=<?php echo urlencode($filter_course); ?>&filter_year=<?php echo urlencode($filter_year); ?>&filter_section=<?php echo urlencode($filter_section); ?>&filter_type=<?php echo urlencode($filter_type); ?>&filter_status=<?php echo urlencode($filter_status); ?>" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 text-xs rounded no-underline">
+                <i class="fas fa-file-pdf"></i> Export to PDF
+            </a>
         </div>
 
         <!-- REPORT PAPER -->

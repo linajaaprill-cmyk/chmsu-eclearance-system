@@ -30,9 +30,6 @@ $totalCourses       = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_courses"
 $totalSections      = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_sections");
 $totalRequirements  = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_requirements");
 $totalSubmissions   = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_submissions");
-$pendingSubmissions  = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_submissions WHERE chmsu_status='Pending'");
-$approvedSubmissions = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_submissions WHERE chmsu_status='Approved'");
-$declinedSubmissions = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_submissions WHERE chmsu_status='Declined'");
 $totalAdminAccounts  = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_admin_users");
 $totalOfficeAccounts = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_auth_roles");
 $totalSchoolYears    = safeCount($conn, "SELECT COUNT(*) AS c FROM chmsu_school_years");
@@ -60,14 +57,29 @@ if ($r && $row = $r->fetch_assoc()) {
     if (!empty($row['email']) && !empty($row['app_password'])) $has_email = true;
 }
 
-// Data for charts
+// Data for charts: clearance decisions per office (current semester)
 $officeRequirements = [];
-$r = $conn->query("SELECT chmsu_office AS office, COUNT(*) AS count FROM chmsu_requirements GROUP BY chmsu_office");
+$chartSemId = 0;
+$r = $conn->query("SELECT id FROM chmsu_semesters WHERE is_current = 1 LIMIT 1");
+if ($r && $row = $r->fetch_assoc()) $chartSemId = (int)$row['id'];
+$chartHasSem = false;
+$r = $conn->query("SHOW COLUMNS FROM chmsu_clearance_status LIKE 'semester_id'");
+if ($r && $r->num_rows > 0) $chartHasSem = true;
+$chartSemJoin = ($chartHasSem && $chartSemId > 0) ? " AND cs.semester_id = $chartSemId" : "";
+$r = $conn->query("SELECT o.office_name AS office,
+                          SUM(cs.status = 'clear') AS approved,
+                          SUM(cs.status = 'unclear') AS declined
+                   FROM chmsu_offices o
+                   LEFT JOIN chmsu_clearance_status cs ON cs.office_name = o.office_name $chartSemJoin
+                   GROUP BY o.office_name
+                   ORDER BY o.office_name ASC");
 if ($r) while ($row = $r->fetch_assoc()) $officeRequirements[] = $row;
 
-$submissionsByMonth = [];
-$r = $conn->query("SELECT DATE_FORMAT(submitted_at, '%b %Y') AS month, COUNT(*) AS count FROM chmsu_submissions GROUP BY DATE_FORMAT(submitted_at, '%b %Y') ORDER BY MIN(submitted_at) ASC LIMIT 6");
-if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
+// Students by year level (donut) - active students from the master list
+$studentsByYear = [];
+$r = $conn->query("SELECT chmsu_year AS yr, COUNT(*) AS count FROM chmsu_students_master WHERE is_archived = 0 GROUP BY chmsu_year ORDER BY chmsu_year ASC");
+if ($r) while ($row = $r->fetch_assoc()) $studentsByYear[] = $row;
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -742,35 +754,6 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
                 <div class="label">Total Offices</div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon" style="background:#fef3c7;color:#d97706;">
-                    <i class="fas fa-file-alt" style="font-size:16px;"></i>
-                </div>
-                <div class="number"><?php echo $totalSubmissions; ?></div>
-                <div class="label">Total Submissions</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon" style="background:#fff7ed;color:#ea580c;">
-                    <i class="fas fa-clock" style="font-size:16px;"></i>
-                </div>
-                <div class="number"><?php echo $pendingSubmissions; ?></div>
-                <div class="label">Pending Submissions</div>
-            </div>
-
-            <div class="stat-card">
-                <div class="stat-icon" style="background:#dcfce7;color:#16a34a;">
-                    <i class="fas fa-check-circle" style="font-size:16px;"></i>
-                </div>
-                <div class="number"><?php echo $approvedSubmissions; ?></div>
-                <div class="label">Approved</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon" style="background:#fee2e2;color:#dc2626;">
-                    <i class="fas fa-times-circle" style="font-size:16px;"></i>
-                </div>
-                <div class="number"><?php echo $declinedSubmissions; ?></div>
-                <div class="label">Declined</div>
-            </div>
-            <div class="stat-card">
                 <div class="stat-icon" style="background:#e0e7ff;color:#4f46e5;">
                     <i class="fas fa-chart-line" style="font-size:16px;"></i>
                 </div>
@@ -812,23 +795,18 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
         <div class="charts-grid">
             <div class="chart-card">
                 <div class="chart-card-header">
-                    <i class="fas fa-chart-pie" style="margin-right:6px;color:#1b4d3e;"></i>
-                    Submission Status
+                    <i class="fas fa-chart-bar" style="margin-right:6px;color:#1b4d3e;"></i>
+                    Clearance per Office
                 </div>
-                <canvas id="submissionStatusChart"></canvas>
-                <div class="merged-legend">
-                    <span class="legend-item"><span class="legend-color" style="background: #f39c12;"></span> Pending <?php echo $pendingSubmissions; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #27ae60;"></span> Approved <?php echo $approvedSubmissions; ?></span>
-                    <span class="legend-item"><span class="legend-color" style="background: #e74c3c;"></span> Declined <?php echo $declinedSubmissions; ?></span>
-                </div>
+                <canvas id="clearanceBarChart"></canvas>
             </div>
 
             <div class="chart-card">
                 <div class="chart-card-header">
-                    <i class="fas fa-chart-line" style="margin-right:6px;color:#1b4d3e;"></i>
-                    Submissions Trend (6 Months)
+                    <i class="fas fa-chart-pie" style="margin-right:6px;color:#1b4d3e;"></i>
+                    Students by Year Level
                 </div>
-                <canvas id="submissionsTrendChart"></canvas>
+                <canvas id="studentsDonutChart"></canvas>
             </div>
         </div>
     </div>
@@ -933,52 +911,47 @@ if ($r) while ($row = $r->fetch_assoc()) $submissionsByMonth[] = $row;
     }
 
     // ===== CHARTS (CHART.JS) =====
-    // 1. Submission Status Doughnut
-    new Chart(document.getElementById('submissionStatusChart'), {
+    // Clearance per Office (Bar)
+    const officeLabels = <?php echo json_encode(array_column($officeRequirements, 'office')); ?>;
+    const officeApproved = <?php echo json_encode(array_map('intval', array_column($officeRequirements, 'approved'))); ?>;
+    const officeDeclined = <?php echo json_encode(array_map('intval', array_column($officeRequirements, 'declined'))); ?>;
+    new Chart(document.getElementById('clearanceBarChart'), {
+        type: 'bar',
+        data: {
+            labels: officeLabels,
+            datasets: [
+                { label: 'Approved', data: officeApproved, backgroundColor: '#27ae60', borderRadius: 4, maxBarThickness: 32, minBarLength: 3 },
+                { label: 'Declined', data: officeDeclined, backgroundColor: '#e74c3c', borderRadius: 4, maxBarThickness: 32, minBarLength: 3 }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12, padding: 12 } } },
+            scales: {
+                y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: 'rgba(0,0,0,0.05)' } },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+
+    // Students by Year Level (Donut)
+    const yearLabels = <?php echo json_encode(array_map(function($y){ return 'Year ' . $y['yr']; }, $studentsByYear)); ?>;
+    const yearCounts = <?php echo json_encode(array_map(function($y){ return (int)$y['count']; }, $studentsByYear)); ?>;
+    new Chart(document.getElementById('studentsDonutChart'), {
         type: 'doughnut',
         data: {
-            labels: ['Pending', 'Approved', 'Declined'],
+            labels: yearLabels,
             datasets: [{
-                data: [<?php echo $pendingSubmissions; ?>, <?php echo $approvedSubmissions; ?>, <?php echo $declinedSubmissions; ?>],
-                backgroundColor: ['#f39c12', '#27ae60', '#e74c3c'],
+                data: yearCounts,
+                backgroundColor: ['#1b4d3e', '#f1c40f', '#3498db', '#e67e22', '#9b59b6', '#95a5a6'],
                 borderWidth: 0
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: true,
-            plugins: { legend: { display: false } }
-        }
-    });
-
-    // 2. Submissions Trend (Line)
-    const monthLabels = [<?php foreach($submissionsByMonth as $m) { echo "'" . $m['month'] . "',"; } ?>];
-    const submissionCounts = [<?php foreach($submissionsByMonth as $m) { echo $m['count'] . ","; } ?>];
-    new Chart(document.getElementById('submissionsTrendChart'), {
-        type: 'line',
-        data: {
-            labels: monthLabels,
-            datasets: [{
-                label: 'Submissions',
-                data: submissionCounts,
-                borderColor: '#1b4d3e',
-                backgroundColor: 'rgba(27, 77, 62, 0.1)',
-                tension: 0.3,
-                fill: true,
-                pointBackgroundColor: '#1b4d3e',
-                pointBorderColor: '#fff',
-                pointBorderWidth: 2,
-                pointRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: true,
-            plugins: { legend: { display: false } },
-            scales: {
-                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
-                x: { grid: { display: false } }
-            }
+            plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12, padding: 12 } } }
         }
     });
 

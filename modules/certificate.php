@@ -98,6 +98,16 @@ if (isset($_SESSION['office']) && $_SESSION['office'] === 'Registrar') {
     $cert_back_url = $_SERVER['PHP_SELF'] . '?adminsection=dashboard';
     $cert_back_label = 'BACK TO DASHBOARD';
 }
+
+// Get registrar verification status for this student
+$cert_reg_verify = ['shs_sf10' => 0, 'jotr' => 0, 'psa_birth' => 0];
+$rv_q = $conn->query("SELECT shs_sf10, jotr, psa_birth FROM chmsu_registrar_verification WHERE student_id='" . $conn->real_escape_string($student_id) . "' LIMIT 1");
+if ($rv_q && $rv_q->num_rows > 0) {
+    $cert_reg_verify = $rv_q->fetch_assoc();
+}
+$psa_checked  = $cert_reg_verify['psa_birth'] ? 'checked' : '';
+$sf_checked   = $cert_reg_verify['shs_sf10']  ? 'checked' : '';
+$jotr_checked = $cert_reg_verify['jotr']       ? 'checked' : '';
 ?>
 
 <!DOCTYPE html>
@@ -500,6 +510,15 @@ if (isset($_SESSION['office']) && $_SESSION['office'] === 'Registrar') {
                 <?php endif; ?>
                 <div class="signature-line"></div>
                 <div class="office-name">STATUS</div>
+            </div>
+        </div>
+
+        <!-- Registrar Document Verification -->
+        <div style="margin: 20px 0 15px 0; font-size: 12px; font-family: 'Times New Roman', Times, serif;">
+            <div style="display: flex; gap: 30px; flex-wrap: wrap; margin-top: 5px;">
+                <div style="display: inline-flex; align-items: center; gap: 5px;"><input type="checkbox" <?php echo $sf_checked; ?> disabled style="width: 13px; height: 13px; margin: 0;"> SHS SF10</div>
+                <div style="display: inline-flex; align-items: center; gap: 5px;"><input type="checkbox" <?php echo $jotr_checked; ?> disabled style="width: 13px; height: 13px; margin: 0;"> JOTR</div>
+                <div style="display: inline-flex; align-items: center; gap: 5px;"><input type="checkbox" <?php echo $psa_checked; ?> disabled style="width: 13px; height: 13px; margin: 0;"> PSA Birth</div>
             </div>
         </div>
 

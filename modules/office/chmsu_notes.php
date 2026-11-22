@@ -187,10 +187,10 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
         if (strpos($mentioned_names_raw, '|||') !== false) {
             $mentioned_names = array_map('trim', explode('|||', $mentioned_names_raw));
         } else {
-            $mentioned_names = array_filter(array_map('trim', explode(',', $mentioned_names_raw)));
+            $mentioned_names = array(trim($mentioned_names_raw));
         }
     }
-    $mentioned_names = array_values(array_unique($mentioned_names));
+    $mentioned_names = array_values(array_unique(array_filter($mentioned_names)));
 
     $mention_ids = array();
     $mention_emails = array();
@@ -200,10 +200,14 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
         $student_name = trim(sanitize($student_name));
         if (empty($student_name)) continue;
 
+        $student_name_esc = $conn->real_escape_string($student_name);
         $student = $conn->query("SELECT s.chmsu_student_id, s.chmsu_full_name, u.email 
                                  FROM chmsu_students_master s
                                  LEFT JOIN chmsu_user_accounts u ON s.chmsu_student_id = u.chmsu_student_id
-                                 WHERE s.chmsu_full_name = '$student_name' 
+                                 WHERE s.chmsu_full_name = '$student_name_esc'
+                                    OR s.chmsu_student_id = '$student_name_esc'
+                                    OR TRIM(CONCAT(s.chmsu_last_name, ', ', s.chmsu_first_name, ', ', s.chmsu_middle_name)) = '$student_name_esc'
+                                    OR TRIM(CONCAT(s.chmsu_last_name, ', ', s.chmsu_first_name)) = '$student_name_esc'
                                  LIMIT 1");
         if ($student && $student->num_rows > 0) {
             $s = $student->fetch_assoc();
@@ -220,7 +224,8 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
 
     if (empty($all_notify_ids) && empty($mentioned_sections) && empty($mentioned_courses)) {
         $_SESSION['note_flash_error'] = "Please mention at least one student, section, or course.";
-        header("Location: ?officesection=note");
+        $note_redirect = (isset($_SESSION['role']) && $_SESSION['role'] === 'registrar') ? '?section=note' : '?officesection=note';
+        header("Location: " . $note_redirect);
         exit;
     } else {
         $primary_student_id = !empty($all_notify_ids) ? $all_notify_ids[0] : '';
@@ -408,11 +413,13 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
             logActivity($conn, $office, 'office', "Posted advisory with mentions: $subject");
 
             $_SESSION['note_flash_success'] = "Advisory posted! " . $totalMentioned . " individual(s) mentioned.";
-            header("Location: ?officesection=note");
+            $note_redirect = (isset($_SESSION['role']) && $_SESSION['role'] === 'registrar') ? '?section=note' : '?officesection=note';
+            header("Location: " . $note_redirect);
             exit;
         } else {
             $_SESSION['note_flash_error'] = "Failed to post advisory: " . $conn->error;
-            header("Location: ?officesection=note");
+            $note_redirect = (isset($_SESSION['role']) && $_SESSION['role'] === 'registrar') ? '?section=note' : '?officesection=note';
+            header("Location: " . $note_redirect);
             exit;
         }
     }
@@ -429,7 +436,8 @@ if (isset($_POST['action']) && $_POST['action'] == 'delete_note' && isset($_SESS
     $conn->query("DELETE FROM chmsu_hidden_posts WHERE post_id = $note_id");
 
     $_SESSION['note_flash_success'] = "Advisory deleted successfully!";
-    header("Location: ?officesection=note");
+    $note_redirect = (isset($_SESSION['role']) && $_SESSION['role'] === 'registrar') ? '?section=note' : '?officesection=note';
+    header("Location: " . $note_redirect);
     exit;
 }
 
@@ -578,29 +586,36 @@ while (ob_get_level() > 0) { ob_end_flush(); }
         body.dark-mode .post-content::-webkit-scrollbar-track { background: #1a1a1a; }
         body.dark-mode .post-content::-webkit-scrollbar-thumb { background: #f1c40f; }
 
-        .section-separator-box { margin: 10px 0; padding: 10px 14px; background: #eaf4ff; border: 1px solid #cfe4f7; border-radius: 8px; }
-        .section-separator-box .sec-label { font-weight: bold; color: #1b4d3e; font-size: 12px; margin-bottom: 6px; }
-        .section-separator-box .sec-names { font-size: 12px; color: #333; line-height: 1.5; }
-        .sec-name { display: block; padding: 2px 0 2px 10px; }
+        .section-separator-box { margin: 12px 0; padding: 12px 14px; background: #f0f7ff; border: 1px solid #d0e3f7; border-radius: 8px; }
+        .section-separator-box .sec-label { font-weight: 700; color: #1b4d3e; font-size: 12px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+        .section-separator-box .sec-names { display: flex; flex-wrap: wrap; gap: 6px; }
+        .sec-name { display: inline-flex; align-items: center; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 3px 10px; font-size: 11.5px; color: #334155; line-height: 1.3; font-weight: 500; }
+        .sec-name i { font-size: 10px; margin-right: 4px; color: #1b4d3e; }
+
+        .course-separator-box { margin: 12px 0; padding: 12px 16px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; }
+        .course-separator-box .course-label { font-weight: 700; color: #7e22ce; font-size: 13px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #e9d5ff; display: flex; align-items: center; gap: 6px; }
+        .course-separator-box .course-subgroup { margin: 8px 0; padding: 8px 12px; background: #ffffff; border: 1px solid #f3e8ff; border-left: 3px solid #9333ea; border-radius: 6px; }
+        .course-separator-box .course-sub-label { font-weight: 700; color: #6b21a8; font-size: 11px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .3px; display: flex; align-items: center; justify-content: space-between; }
+        .course-separator-box .course-sub-names { display: flex; flex-wrap: wrap; gap: 6px; }
+
+        .mention-section { margin-top: 10px; padding: 10px 14px; background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; font-size: 12px; }
+        .mention-section .mention-title { font-weight: 700; color: #92400e; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+        .mention-section .mention-names-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+        .mention-section .mention-pill { display: inline-flex; align-items: center; background: #ffffff; border: 1px solid #fcd34d; border-radius: 12px; padding: 2px 8px; font-size: 11px; color: #78350f; font-weight: 600; }
+        .mention-section .mention-pill i { font-size: 9px; margin-right: 4px; color: #d97706; }
+
         body.dark-mode .section-separator-box { background: #1a2c3a; border-color: #2c4a6a; }
         body.dark-mode .section-separator-box .sec-label { color: #f1c40f; }
         body.dark-mode .section-separator-box .sec-names { color: #ddd; }
-
-        .course-separator-box { margin: 12px 0; padding: 12px 16px; background: #f5eafc; border: 1px solid #ddc8ea; border-radius: 8px; }
-        .course-separator-box .course-label { font-weight: bold; color: #8e44ad; font-size: 13px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #ddc8ea; }
-        .course-separator-box .course-subgroup { margin: 8px 0 8px 12px; padding: 6px 10px; background: #fbf6ff; border-left: 3px solid #8e44ad; border-radius: 4px; }
-        .course-separator-box .course-sub-label { font-weight: bold; color: #6c3483; font-size: 11px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .3px; }
-        .course-separator-box .course-sub-names .sec-name { font-size: 12px; color: #333; padding-left: 8px; }
+        body.dark-mode .sec-name { background: #1e293b; border-color: #475569; color: #e2e8f0; }
+        body.dark-mode .sec-name i { color: #f1c40f; }
         body.dark-mode .course-separator-box { background: #241a3a; border-color: #4a3a6a; }
         body.dark-mode .course-separator-box .course-label { color: #d5b3ff; border-bottom-color: #4a3a6a; }
-        body.dark-mode .course-separator-box .course-subgroup { background: #1a1a2a; }
+        body.dark-mode .course-separator-box .course-subgroup { background: #1e1b2e; border-color: #3b2d54; }
         body.dark-mode .course-separator-box .course-sub-label { color: #c39bd3; }
-        body.dark-mode .course-separator-box .course-sub-names .sec-name { color: #ddd; }
-
-        .mention-section { margin-top: 10px; padding-top: 10px; border-top: 2px dashed #ddd; font-size: 12px; color: #555; }
-        .mention-section .mention-name { font-weight: bold; color: #1b4d3e; display: block; padding: 3px 0; }
-        body.dark-mode .mention-section { border-top-color: #444; color: #ccc; }
-        body.dark-mode .mention-section .mention-name { color: #f1c40f; }
+        body.dark-mode .mention-section { background: #2a2113; border-color: #4d3810; }
+        body.dark-mode .mention-section .mention-title { color: #fde68a; }
+        body.dark-mode .mention-section .mention-pill { background: #1e1a12; border-color: #634812; color: #fef3c7; }
 
         /* Mention picker */
         .student-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #e5e7eb; border-top: none; max-height: 240px; overflow-y: auto; z-index: 9999; display: none; border-radius: 0 0 8px 8px; box-shadow: 0 8px 20px rgba(0,0,0,.12); }
@@ -779,20 +794,22 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                 <?php if (count($allNotes) > 0): ?>
                     <?php foreach ($allNotes as $post): 
                         $mentionedNames = array();
-                        if (preg_match_all('/👥 Mentioned: (.*?)(?:\n|$)/', $post['content'], $matches)) {
-                            $namesStr = trim($matches[1][0]);
+                        if (preg_match_all('/(?:👥|ðŸ‘¥)?\s*Mentioned:\s*(.*?)(?:\n|$)/u', $post['content'], $matches)) {
+                            $namesStr = trim($matches[1][0] ?? '');
                             if (!empty($namesStr)) {
                                 if (strpos($namesStr, '|||') !== false) {
                                     $mentionedNames = array_map('trim', explode('|||', $namesStr));
                                 } else {
-                                    $mentionedNames = array_map('trim', explode(',', $namesStr));
+                                    $mentionedNames = array(trim($namesStr));
                                 }
                             }
                         }
                         $mentionedNames = array_values(array_unique(array_filter($mentionedNames)));
 
+                        $postContentRaw = str_replace(["\r\n", "\r"], "\n", $post['content']);
+
                         $sectionBlocks = array();
-                        if (preg_match('/=== SECTION MENTION ===(.*?)=== END SECTION ===/s', $post['content'], $smatch)) {
+                        if (preg_match('/=== SECTION MENTION ===(.*?)=== END SECTION ===/s', $postContentRaw, $smatch)) {
                             $inner = trim($smatch[1]);
                             $inner = str_replace("\n---SEP---", "", $inner);
                             $lines = explode("\n", $inner);
@@ -809,7 +826,7 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                         }
 
                         $courseBlocks = array();
-                        if (preg_match('/=== COURSE MENTION ===(.*?)=== END COURSE ===/s', $post['content'], $cmatch)) {
+                        if (preg_match('/=== COURSE MENTION ===(.*?)=== END COURSE ===/s', $postContentRaw, $cmatch)) {
                             $cInner = trim($cmatch[1]);
                             $cInner = str_replace("\n---SEP---", "", $cInner);
                             $cInner = str_replace("\n---COURSE-SEP---", "", $cInner);
@@ -850,9 +867,12 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                             return strcmp($a, $b);
                         });
 
-                        $cleanContent = preg_replace('/\n\n=== SECTION MENTION ===.*?=== END SECTION ===/s', '', $post['content']);
-                        $cleanContent = preg_replace('/\n\n=== COURSE MENTION ===.*?=== END COURSE ===/s', '', $cleanContent);
-                        $cleanContent = preg_replace('/\n\n👥 Mentioned: .*/', '', $cleanContent);
+                        $cleanContent = preg_replace('/[\r\n]*=== SECTION MENTION ===.*?=== END SECTION ===[\r\n]*/s', '', $postContentRaw);
+                        $cleanContent = preg_replace('/[\r\n]*=== COURSE MENTION ===.*?=== END COURSE ===[\r\n]*/s', '', $cleanContent);
+                        $cleanContent = preg_replace('/[\r\n]*(?:👥|ðŸ‘¥)?\s*Mentioned: .*/u', '', $cleanContent);
+                        $cleanContent = preg_replace('/---(?:COURSE-)?SEP---/', '', $cleanContent);
+                        $cleanContent = preg_replace('/===\s*(?:END\s+)?(?:COURSE|SECTION)\s*===/', '', $cleanContent);
+                        $cleanContent = trim($cleanContent);
 
                         $isLong = strlen($cleanContent) > 500 || substr_count($cleanContent, "\n") > 10;
                         $searchBlob = strtolower($post['title'] . ' ' . $cleanContent);
@@ -879,26 +899,20 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                         <div class="post-content text-sm text-gray-800 leading-relaxed mb-2 p-3 bg-gray-50 rounded break-words" id="postContent_<?php echo $post['id']; ?>">
                             <?php echo nl2br(htmlspecialchars($cleanContent)); ?>
 
-                            <?php if (!empty($sectionBlocks)): ?>
-                                <?php foreach ($sectionBlocks as $label => $names): ?>
-                                    <div class="section-separator-box">
-                                        <div class="sec-label"><i class="fas fa-users"></i> <?php echo htmlspecialchars($label); ?></div>
-                                        <div class="sec-names">
-                                            <?php foreach ($names as $n): ?><span class="sec-name"><?php echo htmlspecialchars($n); ?></span><?php endforeach; ?>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-
                             <?php if (!empty($courseBlocks)): ?>
                                 <?php foreach ($courseBlocks as $courseName => $subgroups): ?>
                                     <div class="course-separator-box">
                                         <div class="course-label"><i class="fas fa-graduation-cap"></i> <?php echo htmlspecialchars($courseName); ?></div>
                                         <?php foreach ($subgroups as $subLabel => $names): ?>
                                             <div class="course-subgroup">
-                                                <div class="course-sub-label"><?php echo htmlspecialchars($subLabel); ?></div>
+                                                <div class="course-sub-label">
+                                                    <span><?php echo htmlspecialchars($subLabel); ?></span>
+                                                    <span style="font-size: 10px; font-weight: normal; opacity: 0.8;">(<?php echo count($names); ?> students)</span>
+                                                </div>
                                                 <div class="course-sub-names">
-                                                    <?php foreach ($names as $n): ?><span class="sec-name"><?php echo htmlspecialchars($n); ?></span><?php endforeach; ?>
+                                                    <?php foreach ($names as $n): ?>
+                                                        <span class="sec-name"><i class="fas fa-user-graduate"></i><?php echo htmlspecialchars($n); ?></span>
+                                                    <?php endforeach; ?>
                                                 </div>
                                             </div>
                                         <?php endforeach; ?>
@@ -906,12 +920,30 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                                 <?php endforeach; ?>
                             <?php endif; ?>
 
+                            <?php if (!empty($sectionBlocks)): ?>
+                                <?php foreach ($sectionBlocks as $label => $names): ?>
+                                    <div class="section-separator-box">
+                                        <div class="sec-label">
+                                            <span><i class="fas fa-users mr-1"></i><?php echo htmlspecialchars($label); ?></span>
+                                            <span style="font-size: 10px; font-weight: normal; opacity: 0.8;">(<?php echo count($names); ?> students)</span>
+                                        </div>
+                                        <div class="sec-names">
+                                            <?php foreach ($names as $n): ?>
+                                                <span class="sec-name"><i class="fas fa-user-graduate"></i><?php echo htmlspecialchars($n); ?></span>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+
                             <?php if (!empty($mentionedNames)): ?>
                                 <div class="mention-section">
-                                    <div style="font-weight: bold; margin-bottom: 5px;">👥 Individually Mentioned:</div>
-                                    <?php foreach ($mentionedNames as $name): ?>
-                                        <div class="mention-name"><?php echo htmlspecialchars($name); ?></div>
-                                    <?php endforeach; ?>
+                                    <div class="mention-title"><i class="fas fa-user-tag"></i> Individually Mentioned Students (<?php echo count($mentionedNames); ?>):</div>
+                                    <div class="mention-names-grid">
+                                        <?php foreach ($mentionedNames as $name): ?>
+                                            <span class="mention-pill"><i class="fas fa-user"></i><?php echo htmlspecialchars($name); ?></span>
+                                        <?php endforeach; ?>
+                                    </div>
                                 </div>
                             <?php endif; ?>
                         </div>

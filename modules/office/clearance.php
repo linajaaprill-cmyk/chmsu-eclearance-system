@@ -143,7 +143,7 @@
         $content = $post['content'];
 
         // Individual mentions
-        if (preg_match('/👥 Mentioned:\s*(.+?)(?:\n|$)/', $content, $m)) {
+        if (preg_match('/(?:👥|ðŸ‘¥)?\s*Mentioned:\s*(.+?)(?:\n|$)/u', $content, $m)) {
             $raw_names = trim($m[1]);
             if ($raw_names !== '') {
                 $names = array_map('trim', explode('|||', $raw_names));
@@ -281,6 +281,15 @@
                             $skipped_locked++;
                             continue;
                         }
+                    } elseif ($office === 'Dean') {
+                        $cleared_osa = (int)$conn->query("SELECT COUNT(*) AS c FROM chmsu_clearance_status
+                                                          WHERE student_id='$student_id' AND office_name = 'OSA' AND status='clear'
+                                                          $sem_clause
+                                                         ")->fetch_assoc()['c'];
+                        if ($cleared_osa <= 0) {
+                            $skipped_locked++;
+                            continue;
+                        }
                     }
 
                     $saved = cl_save_status($conn, $student_id, $office, $current_sem_id, $has_sem_col,
@@ -341,10 +350,11 @@
                 }
 
                 $verb = $is_approve ? 'Approved' : 'Declined';
-                logActivity($conn, $office, 'office', "$verb $processed students" . ($skipped_mentioned ? " ($skipped_mentioned skipped — mentioned)" : "") . ($skipped_locked ? " ($skipped_locked skipped — registrar lock)" : ""));
+                $lock_reason_label = ($office === 'Dean') ? 'pending OSA approval' : 'registrar lock';
+                logActivity($conn, $office, 'office', "$verb $processed students" . ($skipped_mentioned ? " ($skipped_mentioned skipped — mentioned)" : "") . ($skipped_locked ? " ($skipped_locked skipped — $lock_reason_label)" : ""));
                 $success = "$processed student(s) " . strtolower($verb) . " successfully!";
                 if ($skipped_mentioned > 0) $success .= " — $skipped_mentioned skipped (mentioned in posts — turn on the Mentioned toggle to include them).";
-                if ($skipped_locked > 0)  $success .= " — $skipped_locked skipped (pending other offices).";
+                if ($skipped_locked > 0)  $success .= " — $skipped_locked skipped (" . (($office === 'Dean') ? 'pending OSA approval' : 'pending other offices') . ").";
                 if ($failed > 0)          $success .= " — $failed could not be saved.";
             }
 
@@ -503,6 +513,7 @@
             }
             .office-sidebar .sidebar-menu a:hover,
             .office-sidebar .sidebar-menu a.active { background: #f1c40f; color: #000000; }
+            .office-sidebar .sidebar-menu a .chat-badge { background: #e74c3c; color: white; border-radius: 12px; padding: 2px 8px; font-size: 10px; min-width: 20px; text-align: center; float: right; }
             
             .main-content {
                 flex: 1;
@@ -921,6 +932,14 @@
     </div>
 
     <div class="dashboard-wrapper">
+        <?php
+        $chat_unread_count = 0;
+        $chat_res = $conn->query("SELECT SUM(office_unread) as total FROM chmsu_chat_conversations WHERE office_name='" . $conn->real_escape_string($office) . "'");
+        if ($chat_res) {
+            $chat_row = $chat_res->fetch_assoc();
+            $chat_unread_count = intval($chat_row['total']);
+        }
+        ?>
         <div class="office-sidebar">
             <div class="sidebar-header">
                 <h3><?php echo htmlspecialchars($office); ?> Portal</h3>
@@ -928,9 +947,18 @@
             </div>
             <ul class="sidebar-menu">
                 <li><a href="?officesection=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-                <li><a href="?officesection=feed"><i class="fas fa-rss"></i> Feed Updates</a></li>
+                <li><a href="?officesection=note"><i class="fas fa-rss"></i> Feed Updates</a></li>
                 <li><a href="?officesection=clearance" class="active"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
+                <li><a href="?officesection=history"><i class="fas fa-history"></i> Clearance History</a></li>
                 <li><a href="?officesection=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
+                <li>
+                    <a href="?officesection=chat" class="chat-link">
+                        <i class="fas fa-comment"></i> Messages
+                        <?php if ($chat_unread_count > 0): ?>
+                            <span class="chat-badge"><?php echo $chat_unread_count; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li style="margin-top: 20px; border-top: 1px solid #2d6a4f;">
                     <a href="#" onclick="confirmLogout()"><i class="fas fa-sign-out-alt"></i> Logout</a>
                 </li>
@@ -985,6 +1013,12 @@
                 <div class="info-message">
                     <i class="fas fa-info-circle"></i> 
                     <strong><?php echo count($mentioned_students); ?> student(s)</strong> have been mentioned in posts this semester and are locked from Approve / Decline. Turn on the <strong>Mentioned</strong> toggle to include them.
+                </div>
+            <?php endif; ?>
+            <?php if ($office === 'Dean' && $view_mode == 'pending'): ?>
+                <div class="info-message" style="background: #e8f4fd; border-left: 4px solid #3498db; color: #1d6fa5;">
+                    <i class="fas fa-shield-alt"></i> 
+                    <strong>Dean Clearance Rule:</strong> You can only take action on students who have already been approved by <strong>OSA</strong>. Students pending OSA clearance are locked (<i class="fas fa-lock" style="color:#e74c3c;"></i>).
                 </div>
             <?php endif; ?>
             
@@ -1166,21 +1200,33 @@
                                     data-section="<?php echo htmlspecialchars($s['chmsu_section']); ?>">
                                     <?php 
                                     $is_locked = false;
-                                    if ($office == 'Registrar') {
-                                        $total_other = $conn->query("SELECT COUNT(*) as c FROM chmsu_offices WHERE office_name != 'Registrar'")->fetch_assoc()['c'];
-                                        $sem_clause_ui = ($has_sem_col && $current_sem_id > 0) ? " AND semester_id = $current_sem_id " : "";
-                                        $cleared_by_others = $conn->query("SELECT COUNT(*) as c FROM chmsu_clearance_status WHERE student_id='{$s['chmsu_student_id']}' AND office_name != 'Registrar' AND status='clear' $sem_clause_ui")->fetch_assoc()['c'];
-                                        
-                                        if ($cleared_by_others < $total_other || $total_other == 0) {
-                                            $is_locked = true;
+                                    // Lock is ONLY for pending (process) mode — never lock processed students so undo is always available
+                                    if ($view_mode === 'pending') {
+                                        if ($office == 'Registrar') {
+                                            $total_other = $conn->query("SELECT COUNT(*) as c FROM chmsu_offices WHERE office_name != 'Registrar'")->fetch_assoc()['c'];
+                                            $sem_clause_ui = ($has_sem_col && $current_sem_id > 0) ? " AND semester_id = $current_sem_id " : "";
+                                            $cleared_by_others = $conn->query("SELECT COUNT(*) as c FROM chmsu_clearance_status WHERE student_id='{$s['chmsu_student_id']}' AND office_name != 'Registrar' AND status='clear' $sem_clause_ui")->fetch_assoc()['c'];
+                                            
+                                            if ($cleared_by_others < $total_other || $total_other == 0) {
+                                                $is_locked = true;
+                                            }
+                                        } elseif ($office == 'Dean') {
+                                            $sem_clause_ui = ($has_sem_col && $current_sem_id > 0) ? " AND semester_id = $current_sem_id " : "";
+                                            $cleared_by_osa = (int)$conn->query("SELECT COUNT(*) as c FROM chmsu_clearance_status WHERE student_id='{$s['chmsu_student_id']}' AND office_name = 'OSA' AND status='clear' $sem_clause_ui")->fetch_assoc()['c'];
+                                            
+                                            if ($cleared_by_osa <= 0) {
+                                                $is_locked = true;
+                                            }
                                         }
                                     }
+                                    $lock_title = ($office == 'Dean') ? 'Pending OSA approval' : 'Pending other offices';
+                                    $lock_label = ($office == 'Dean') ? 'Pending OSA' : 'Pending other offices';
                                     ?>
 
                                     <?php if ($view_mode == 'pending'): ?>
                                     <td>
                                         <?php if ($is_locked): ?>
-                                            <div style="color: #e74c3c; font-size: 16px; text-align: center; cursor: not-allowed;" title="Pending other offices">
+                                            <div style="color: #e74c3c; font-size: 16px; text-align: center; cursor: not-allowed;" title="<?php echo $lock_title; ?>">
                                                 <i class="fas fa-lock"></i>
                                             </div>
                                         <?php else: ?>
@@ -1197,16 +1243,10 @@
                                     </td>
                                     <?php else: ?>
                                     <td>
-                                        <?php if ($is_locked): ?>
-                                             <div style="color: #e74c3c; font-size: 16px; text-align: center; cursor: not-allowed;" title="Pending other offices">
-                                                <i class="fas fa-lock"></i>
-                                            </div>
-                                        <?php else: ?>
-                                            <input type="checkbox" name="selected_students[]" value="<?php echo $s['chmsu_student_id']; ?>" 
-                                                   class="student-checkbox-processed" form="revertForm"
-                                                   data-mentioned="<?php echo $isMentioned ? '1' : '0'; ?>"
-                                                   onchange="updateSelectedCountProcessed()">
-                                        <?php endif; ?>
+                                        <input type="checkbox" name="selected_students[]" value="<?php echo $s['chmsu_student_id']; ?>" 
+                                               class="student-checkbox-processed" form="revertForm"
+                                               data-mentioned="<?php echo $isMentioned ? '1' : '0'; ?>"
+                                               onchange="updateSelectedCountProcessed()">
                                     </td>
                                     <?php endif; ?>
                                     <td><code><?php echo $s['chmsu_student_id']; ?></code></td>
@@ -1221,8 +1261,8 @@
                                         </span>
                                     </td>
                                     <td>
-                                        <?php if ($is_locked): ?>
-                                            <span style="color: #e74c3c; font-size: 10px; font-weight: bold;"><i class="fas fa-exclamation-triangle"></i> Pending other offices</span>
+                                        <?php if ($view_mode == 'pending' && $is_locked): ?>
+                                            <span style="color: #e74c3c; font-size: 10px; font-weight: bold;"><i class="fas fa-exclamation-triangle"></i> <?php echo $lock_label; ?></span>
                                         <?php elseif ($status == 'unclear' && !empty($s['clearance_note'])): ?>
                                             <span style="color: #e74c3c; font-size: 10px;"><?php echo htmlspecialchars($s['clearance_note']); ?></span>
                                         <?php elseif ($status == 'clear'): ?>

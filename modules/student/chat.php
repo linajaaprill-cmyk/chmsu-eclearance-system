@@ -77,6 +77,11 @@ $conn->query("CREATE TABLE IF NOT EXISTS chmsu_group_chat_reads (
     INDEX idx_office (office_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+$chkCol = $conn->query("SHOW COLUMNS FROM chmsu_group_chat_reads LIKE 'updated_at'");
+if ($chkCol && $chkCol->num_rows == 0) {
+    $conn->query("ALTER TABLE chmsu_group_chat_reads ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+}
+
 // Per-user "clear chat" marker for group chat (so clearing doesn't delete for everyone)
 $conn->query("CREATE TABLE IF NOT EXISTS chmsu_group_chat_clears (
     id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -129,6 +134,134 @@ function st_canonOffice($conn, $name) {
     $r = $conn->query("SELECT office_name FROM chmsu_offices WHERE LOWER(office_name)=LOWER('$n') LIMIT 1");
     if ($r && $r->num_rows > 0) return $r->fetch_assoc()['office_name'];
     return '';
+}
+
+// ---- Send email notification to office when student chats (no emoji in Gmail) ----
+function st_notifyOfficeNewChat($conn, $office_name, $student_id, $message, $chat_context = 'PM', $course = '', $file_path = '', $file_name = '', $file_type = '') {
+    if (!function_exists('sendEmail') && file_exists(__DIR__ . '/../../includes/email.php')) {
+        require_once __DIR__ . '/../../includes/email.php';
+    }
+    if (empty($office_name) || empty($student_id) || !function_exists('sendEmail')) return;
+
+    $off_sql = $conn->real_escape_string($office_name);
+    $offRow = $conn->query("SELECT email FROM chmsu_auth_roles WHERE LOWER(chmsu_role) = LOWER('$off_sql') LIMIT 1");
+    $office_email = '';
+    if ($offRow && $offRow->num_rows > 0) {
+        $offData = $offRow->fetch_assoc();
+        $office_email = trim($offData['email'] ?? '');
+    }
+
+    // Fallback if office hasn't connected Google yet
+    if (empty($office_email) || strpos($office_email, 'your_') !== false || strpos($office_email, '@example.com') !== false) {
+        $admRow = $conn->query("SELECT email FROM chmsu_admin_users WHERE email != '' LIMIT 1");
+        if ($admRow && $admRow->num_rows > 0) {
+            $office_email = trim($admRow->fetch_assoc()['email'] ?? '');
+        }
+        if (empty($office_email) && defined('SMTP_USER')) {
+            $office_email = SMTP_USER;
+        }
+    }
+    if (empty($office_email)) return;
+
+    $stRow = $conn->query("SELECT chmsu_full_name, chmsu_course, chmsu_year, chmsu_section FROM chmsu_students_master WHERE chmsu_student_id = '" . $conn->real_escape_string($student_id) . "' LIMIT 1");
+    $stData = ($stRow && $stRow->num_rows > 0) ? $stRow->fetch_assoc() : null;
+    $student_name = $stData['chmsu_full_name'] ?? $student_id;
+    $student_course = $course ?: ($stData['chmsu_course'] ?? '');
+    $sec = trim(($stData['chmsu_course'] ?? '') . ' ' . ($stData['chmsu_year'] ?? '') . '-' . ($stData['chmsu_section'] ?? ''));
+
+    // Strip emojis for clean Gmail delivery
+    $clean_msg = preg_replace('/[\x{1F600}-\x{1F64F}\x{1F300}-\x{1F5FF}\x{1F680}-\x{1F6FF}\x{1F1E0}-\x{1F1FF}\x{2600}-\x{26FF}\x{2700}-\x{27BF}\x{1F900}-\x{1F9FF}\x{1FA70}-\x{1FAFF}]/u', '', $message);
+    $clean_msg = trim(str_replace('📎', '', $clean_msg));
+    if ($clean_msg === '') $clean_msg = '[Attachment Sent]';
+
+    $is_group = (stripos($chat_context, 'group') !== false || !empty($course));
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+
+    // Handle image or file attachments in notification
+    $is_image = false;
+    $attachment_html = '';
+    $ext = strtolower($file_type ?: pathinfo($file_name ?: $file_path, PATHINFO_EXTENSION));
+    $disk_file = '';
+    $embedded_cid = null;
+
+    if (!empty($file_path)) {
+        $candidates = [
+            $file_path,
+            __DIR__ . '/../../' . ltrim($file_path, '/'),
+            __DIR__ . '/../' . ltrim($file_path, '/'),
+            __DIR__ . '/../../uploads/' . basename($file_path),
+        ];
+        foreach ($candidates as $cand) {
+            if (file_exists($cand) && is_file($cand)) {
+                $disk_file = realpath($cand);
+                break;
+            }
+        }
+    }
+
+    $base_app_url = "http://" . $host . (strpos($_SERVER['REQUEST_URI'] ?? '', '/capstone') !== false ? '/capstone' : (file_exists($_SERVER['DOCUMENT_ROOT'] . '/capstone') ? '/capstone' : ''));
+
+    if (!empty($file_path) && in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'])) {
+        $is_image = true;
+        $embedded_cid = 'chat_img_' . time() . '_' . mt_rand(100, 999);
+        $img_src = !empty($disk_file) ? "cid:$embedded_cid" : ($base_app_url . '/' . ltrim($file_path, '/'));
+        $attachment_html = "<div style='margin:14px 0; text-align:center; background:#ffffff; border:1px solid #e1e4e8; border-radius:6px; padding:12px;'>
+            <p style='margin:0 0 8px 0; font-size:12px; color:#555;'><strong>Attached Image:</strong> " . htmlspecialchars($file_name ?: basename($file_path)) . "</p>
+            <div style='display:inline-block;'>
+                <img src='$img_src' alt='Chat Image Attachment' style='max-width:100%; max-height:420px; border-radius:4px; border:1px solid #ddd; object-fit:contain;' />
+            </div>
+        </div>";
+    } elseif (!empty($file_path)) {
+        $file_url = $base_app_url . '/' . ltrim($file_path, '/');
+        $attachment_html = "<div style='margin:12px 0; padding:10px 14px; background:#eef7f2; border-left:4px solid #1b4d3e; border-radius:4px; font-size:13px;'>
+            <strong>Attached File:</strong> " . htmlspecialchars($file_name ?: basename($file_path)) . " (" . htmlspecialchars(strtoupper($ext)) . ")
+        </div>";
+    }
+
+    $img_tag = $is_image ? " [Image Attached]" : (!empty($file_path) ? " [File Attached]" : "");
+
+    if ($is_group) {
+        $course_label = $student_course ? $student_course : 'All Courses';
+        $subject = "New Group Chat Message" . $img_tag . " [Course: " . $course_label . "] - CHMSU Clearance";
+        $context_text = "<p>A new message was posted in the <strong>Course: " . htmlspecialchars($course_label) . "</strong> group chat by student <strong>" . htmlspecialchars($student_name) . "</strong> (" . htmlspecialchars($student_id) . ($sec ? " - " . htmlspecialchars($sec) : "") . "):</p>
+        <div class='msg-box'>
+            <p style='margin:0 0 6px 0; font-size:12px; color:#1b4d3e;'><strong>COURSE: " . htmlspecialchars($course_label) . "</strong></p>
+            <p style='margin:0;'><strong>" . nl2br(htmlspecialchars($clean_msg)) . "</strong></p>
+        </div>" . $attachment_html;
+    } else {
+        $subject = "New PM Chat Message" . $img_tag . " from " . $student_name . " - CHMSU Clearance";
+        $context_text = "<p>Student <strong>" . htmlspecialchars($student_name) . "</strong> (" . htmlspecialchars($student_id) . ($sec ? " - " . htmlspecialchars($sec) : "") . ") sent you a private direct message (PM):</p>
+        <div class='msg-box'>
+            <p style='margin:0 0 6px 0; font-size:12px; color:#1b4d3e;'><strong>DIRECT MESSAGE (PM)</strong></p>
+            <p style='margin:0;'><strong>" . nl2br(htmlspecialchars($clean_msg)) . "</strong></p>
+        </div>" . $attachment_html;
+    }
+
+    $chat_url = (strcasecmp($office_name, 'Registrar') === 0) 
+        ? "$base_app_url/index.php?section=chat" 
+        : "$base_app_url/index.php?officesection=chat";
+
+    $body = "<html><head><style>
+        body { font-family: 'Times New Roman', Times, serif; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        .header { background: #1b4d3e; color: white; padding: 15px; text-align: center; }
+        .msg-box { background: #f8f9fa; padding: 15px; border-left: 4px solid #1b4d3e; border-radius: 4px; margin: 15px 0; font-size: 14px; }
+        .footer { text-align: center; padding: 15px; font-size: 11px; color: #888; border-top: 1px solid #ddd; margin-top: 20px; }
+        .btn { display: inline-block; background: #1b4d3e; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold; }
+    </style></head><body>
+        <div class='container'>
+            <div class='header'><h2>CHMSU E-Clearance System</h2></div>
+            <div style='padding:20px;'>
+                <p>Dear <strong>" . htmlspecialchars($office_name) . "</strong>,</p>
+                $context_text
+                <p style='margin-top:15px;'>Please log in to your office portal to view and reply.</p>
+                <p><a href='$chat_url' class='btn'>Open Chat</a></p>
+            </div>
+            <div class='footer'><p>CHMSU E-Clearance System - Automated Notification</p></div>
+        </div>
+    </body></html>";
+
+    try { @sendEmail($office_email, $office_name, $subject, $body, true, null, null, false, $disk_file, $file_name ?: basename($file_path), $embedded_cid); } catch (Throwable $e) {}
 }
 // WHERE clause: which group messages this student may see
 function st_grpWhere($conn, $office, $course, $year, $section) {
@@ -237,9 +370,8 @@ function st_tableCols($conn, $table) {
 function st_clearChatNotifs($conn, $sid, $office = '') {
     try {
         $cols = st_tableCols($conn, 'chmsu_notifications');
-        if (!in_array('student_id', $cols, true) || !in_array('type', $cols, true)) return;
         $s = $conn->real_escape_string($sid);
-        $w = "student_id='$s' AND type='chat'";
+        $w = "(student_id='$s' OR user_id='$s') AND (type='chat' OR title LIKE '%mentioned%')";
         if ($office !== '' && in_array('office_name', $cols, true)) {
             $o = $conn->real_escape_string($office);
             $w .= " AND LOWER(office_name)=LOWER('$o')";
@@ -264,7 +396,7 @@ function st_markGroupRead($conn, $sid, $office, $course, $year, $section) {
     $conn->query("INSERT INTO chmsu_group_chat_reads
         (student_id, office_name, course, year_level, section, last_read_message_id)
         VALUES ('$sid_e', '$off_e', '$c_e', '', '', $latest)
-        ON DUPLICATE KEY UPDATE last_read_message_id = $latest, updated_at = NOW()");
+        ON DUPLICATE KEY UPDATE last_read_message_id = $latest");
 }
 
 // ---- Messenger-style list data ----
@@ -439,6 +571,7 @@ if (isset($_POST['action'])
             if (!$ok) st_out(['success' => false, 'message' => 'DB error: ' . $conn->error]);
 
             logActivity($conn, $student_id, 'student', "Sent group chat to $office ($myCourse)");
+            st_notifyOfficeNewChat($conn, $office, $student_id, $message, 'Group Chat', $myCourse, $file_path, $file_name, $file_type);
             st_out(['success' => true]);
         }
 
@@ -676,6 +809,7 @@ if (isset($_POST['action'])) {
                       last_message_time = NOW(),
                       office_unread = office_unread + 1");
         logActivity($conn, $student_id, 'student', "Sent chat message to office: $office_name");
+        st_notifyOfficeNewChat($conn, $office_name, $student_id, $message, 'PM', '', $file_path, $file_name, $file_type);
 
         echo json_encode(['success' => true]);
         exit;
@@ -1651,8 +1785,13 @@ function refreshMentionAlert() {
     }
 }
 function openMentionAlert() {
-    const o = document.getElementById('mentionAlert').dataset.office;
+    const bar = document.getElementById('mentionAlert');
+    if (!bar) return;
+    const o = bar.dataset.office;
     if (!o) return;
+    bar.classList.remove('show');
+    bar.innerHTML = '';
+    bar.dataset.office = '';
     toggleSidebarMode('group');
     selectGroupOffice(o);
 }

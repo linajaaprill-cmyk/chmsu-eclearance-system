@@ -255,6 +255,28 @@ if ($type === 'word') {
     echo adm_report_html('word', $reportData);
     exit;
 }
+if ($type === 'pdf') {
+    if (file_exists(__DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php')) {
+        require_once __DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php';
+    } elseif (file_exists('C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php')) {
+        require_once 'C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php';
+    }
+    
+    $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
+    $pdf->SetCreator('CHMSU E-Clearance System');
+    $pdf->SetAuthor('CHMSU Admin');
+    $pdf->SetTitle($reportData['filename']);
+    $pdf->setPrintHeader(false);
+    $pdf->setPrintFooter(false);
+    $pdf->SetMargins(12, 12, 12);
+    $pdf->SetAutoPageBreak(TRUE, 12);
+    $pdf->SetFont('helvetica', '', 8);
+    $pdf->AddPage();
+    $html = adm_report_html('pdf', $reportData);
+    $pdf->writeHTML($html, true, false, true, false, '');
+    $pdf->Output($reportData['filename'] . '.pdf', 'D');
+    exit;
+}
 
 http_response_code(400);
 exit('Invalid export_type');

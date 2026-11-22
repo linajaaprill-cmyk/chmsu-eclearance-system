@@ -20,7 +20,11 @@ if (isset($_POST['action']) && $_POST['action'] == 'hide_post' && isset($_SESSIO
         UNIQUE KEY unique_hidden (student_id, post_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $conn->query("INSERT INTO chmsu_hidden_posts (student_id, post_id) VALUES ('{$_SESSION['student']}', $post_id)");
-    header("Location: ?view=feed");
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    if (!headers_sent()) {
+        header("Location: ?view=feed");
+    }
+    echo "<script>window.location.href = '?view=feed';</script>";
     exit;
 }
 
@@ -28,6 +32,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'hide_post' && isset($_SESSIO
 // HANDLE MARK SINGLE NOTIFICATION AS READ (AJAX)
 // ============================================
 if (isset($_POST['action']) && $_POST['action'] == 'mark_one_notification_read' && isset($_SESSION['student'])) {
+    while (ob_get_level() > 0) { ob_end_clean(); }
     header('Content-Type: application/json');
     $notif_id = intval($_POST['notification_id']);
     $conn->query("UPDATE chmsu_notifications SET is_read = 1 
@@ -42,6 +47,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'mark_one_notification_read' 
 // HANDLE MARK ALL NOTIFICATIONS READ (AJAX)
 // ============================================
 if (isset($_POST['action']) && $_POST['action'] == 'mark_notifications_read' && isset($_SESSION['student'])) {
+    while (ob_get_level() > 0) { ob_end_clean(); }
     header('Content-Type: application/json');
     $conn->query("UPDATE chmsu_notifications SET is_read = 1 
                   WHERE user_type='student' 
@@ -783,13 +789,13 @@ if ($current_year_result && $current_year_result->num_rows > 0) {
                 // 1) INDIVIDUAL mentions — show ONLY my own name
                 // ============================================================
                 $mentionedNamesRaw = array();
-                if (preg_match_all('/👥 Mentioned: (.*?)(?:\n|$)/', $content, $matches)) {
-                    $namesStr = trim($matches[1][0]);
+                if (preg_match_all('/(?:👥|ðŸ‘¥)?\s*Mentioned:\s*(.*?)(?:\n|$)/u', $content, $matches)) {
+                    $namesStr = trim($matches[1][0] ?? '');
                     if (!empty($namesStr)) {
                         if (strpos($namesStr, '|||') !== false) {
                             $mentionedNamesRaw = array_map('trim', explode('|||', $namesStr));
                         } else {
-                            $mentionedNamesRaw = array_map('trim', explode(',', $namesStr));
+                            $mentionedNamesRaw = array(trim($namesStr));
                         }
                     }
                 }
@@ -860,9 +866,11 @@ if ($current_year_result && $current_year_result->num_rows > 0) {
                     return strcmp($a, $b);
                 });
 
-                $cleanContent = preg_replace('/\n\n=== SECTION MENTION ===.*?=== END SECTION ===/s', '', $content);
-                $cleanContent = preg_replace('/\n\n=== COURSE MENTION ===.*?=== END COURSE ===/s', '', $cleanContent);
-                $cleanContent = preg_replace('/\n\n👥 Mentioned: .*/', '', $cleanContent);
+                $cleanContent = preg_replace('/[\r\n]*=== SECTION MENTION ===.*?=== END SECTION ===[\r\n]*/s', '', $content);
+                $cleanContent = preg_replace('/[\r\n]*=== COURSE MENTION ===.*?=== END COURSE ===[\r\n]*/s', '', $cleanContent);
+                $cleanContent = preg_replace('/[\r\n]*(?:👥|ðŸ‘¥)?\s*Mentioned: .*/u', '', $cleanContent);
+                $cleanContent = preg_replace('/---(?:COURSE-)?SEP---/', '', $cleanContent);
+                $cleanContent = preg_replace('/===\s*(?:END\s+)?(?:COURSE|SECTION)\s*===/', '', $cleanContent);
                 $cleanContent = trim($cleanContent);
 
                 // Is this student mentioned?

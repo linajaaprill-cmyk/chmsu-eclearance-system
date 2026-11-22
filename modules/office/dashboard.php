@@ -62,6 +62,18 @@ if ($currentSemId > 0) {
 // Get recent activities
 $recentActivities = $conn->query("SELECT * FROM chmsu_activity_log WHERE user_type='office' AND user_id='$office' ORDER BY created_at DESC LIMIT 8");
 
+// Google OAuth flash messages
+if (isset($_GET['gmail_connected'])) {
+    $success = "Gmail connected successfully!";
+}
+if (isset($_GET['google_error'])) {
+    if ($_GET['google_error'] === 'not_configured') {
+        $error = "Google Sign-In is not configured yet. Please configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env";
+    } else {
+        $error = "Failed to connect Gmail with Google. Please try again.";
+    }
+}
+
 // ============================================
 // GET OFFICE EMAIL INFO
 // ============================================
@@ -150,7 +162,9 @@ if ($currentSemId > 0) {
                     }
                 }
             }
-        }
+        };
+        // Enforce white light mode on office dashboard
+        document.documentElement.classList.remove('dark');
     </script>
 
     <style>
@@ -236,7 +250,7 @@ if ($currentSemId > 0) {
             flex: 1;
             margin-left: 260px;
             padding: 20px;
-            background: #f5f5f5;
+            background: #ffffff;
             min-height: calc(100vh - 73px);
         }
 
@@ -246,10 +260,10 @@ if ($currentSemId > 0) {
         }
     </style>
 </head>
-<body class="bg-gray-50 dark:bg-gray-900 transition-colors duration-300 text-gray-800 dark:text-gray-200">
+<body class="bg-white transition-colors duration-300 text-gray-800">
 
 <!-- HEADER -->
-<div class="header dark:bg-gray-800">
+<div class="header">
     <div class="header-logo">
         <img src="https://tse4.mm.bing.net/th/id/OIP._MzqqLuZngO_bDcppKr1wAHaHa?pid=Api&h=220&P=0" alt="CHMSU Logo">
     </div>
@@ -585,17 +599,18 @@ if ($currentSemId > 0) {
 <script>
     lucide.createIcons();
 
-    // Dark Mode Logic
+    // Office Dashboard White Mode Logic
     function toggleDarkMode() {
         document.documentElement.classList.toggle('dark');
         const isDarkMode = document.documentElement.classList.contains('dark');
-        localStorage.setItem('darkMode', isDarkMode);
+        localStorage.setItem('office_darkMode', isDarkMode ? 'true' : 'false');
     }
     
-    if (localStorage.getItem('darkMode') === 'true' || (!('darkMode' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.classList.add('dark');
-    } else {
+    // Enforce clean white mode on load
+    document.documentElement.classList.remove('dark');
+    if (localStorage.getItem('office_darkMode') === 'true') {
         document.documentElement.classList.remove('dark');
+        localStorage.setItem('office_darkMode', 'false');
     }
 
     function confirmLogout() {

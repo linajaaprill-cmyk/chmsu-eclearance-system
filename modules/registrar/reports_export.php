@@ -193,6 +193,11 @@ if ($type === 'excel') {
     $css = '@page Section1{size:13in 8.5in;mso-page-orientation:landscape;margin:1.75in 0.5in 0.7in 0.5in;mso-header-margin:0.35in;mso-footer-margin:0.35in;mso-header:h1;mso-footer:f1;} div.Section1{page:Section1;} '
         . $cssBase
         . ' table.data{mso-table-lspace:0pt;mso-table-rspace:0pt;} table.data th{mso-line-height-rule:exactly;} table.data td{mso-line-height-rule:exactly;}';
+} else if ($type === 'pdf') {
+    $isPdf = true;
+    $headXml = '';
+    $css = $cssBase;
+    ob_start();
 } else {
     exit('Invalid export type');
 }
@@ -265,4 +270,30 @@ if ($isWord) {
     echo '</div>';
 }
 echo '</body></html>';
+
+if (!empty($isPdf)) {
+    $htmlContent = ob_get_clean();
+    if (file_exists(__DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php')) {
+        require_once __DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php';
+    } elseif (file_exists('C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php')) {
+        require_once 'C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php';
+    }
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    
+    $pdf = new TCPDF('L', 'mm', 'A4', true, 'UTF-8', false);
+    $pdf->SetCreator('CHMSU E-Clearance System');
+    $pdf->SetAuthor('Registrar Office');
+    $pdf->SetTitle('Clearance_Report_' . date('Ymd'));
+    $pdf->setPrintHeader(false);
+    $pdf->setPrintFooter(false);
+    $pdf->SetMargins(10, 10, 10);
+    $pdf->SetAutoPageBreak(TRUE, 10);
+    $pdf->SetFont('helvetica', '', 7.5);
+    $pdf->AddPage();
+    $pdf->writeHTML($htmlContent, true, false, true, false, '');
+    $pdf->Output('Clearance_Report_' . date('Ymd') . '.pdf', 'D');
+    exit;
+}
+
 exit;

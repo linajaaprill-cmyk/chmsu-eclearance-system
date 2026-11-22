@@ -241,9 +241,12 @@ if ($f_course !== '' && $f_year !== '') {
         <div class="pr-alert error"><?php echo $error; ?></div>
     <?php endif; ?>
 
-    <!-- Back button -->
-    <div class="back-btn-row">
+    <!-- Back and Logout buttons -->
+    <div class="back-btn-row" style="display:flex; justify-content:space-between; align-items:center;">
         <a href="?adminsection=dashboard" class="back-btn">&#8592; Back</a>
+        <a href="?logout=1" class="logout-btn" style="background:#e74c3c; color:white; padding:8px 16px; border-radius:6px; font-size:13px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:6px;" onclick="confirmLogout(); return false;">
+            <i class="fas fa-sign-out-alt"></i> Logout
+        </a>
     </div>
 
     <div class="pr-card">

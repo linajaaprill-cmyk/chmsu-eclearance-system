@@ -232,6 +232,7 @@ if ($current_sem_id > 0) {
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
             <li><a href="?section=clearance" class="active"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
             <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
+            <li><a href="?section=history"><i class="fas fa-history"></i> Clearance History</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
             <li><a href="?section=archived"><i class="fas fa-archive"></i> Archive</a></li>
             <li><a href="?section=promotion"><i class="fas fa-arrow-up"></i> Student Promotion</a></li>

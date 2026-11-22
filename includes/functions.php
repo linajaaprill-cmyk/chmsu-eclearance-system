@@ -35,7 +35,7 @@ function handleActions($conn, &$error, &$success) {
         if ($officeCheck && $officeCheck->num_rows > 0) {
             $office = $officeCheck->fetch_assoc();
             if (password_verify($password, $office['chmsu_password'])) {
-                $_SESSION['office'] = $username;
+                $_SESSION['office'] = $office['chmsu_role'];
                 logActivity($conn, $username, 'office', 'Logged in');
                 header("Location: " . $_SERVER['PHP_SELF']);
                 exit;
@@ -704,6 +704,12 @@ function handleActions($conn, &$error, &$success) {
     // ============================================
     if (isset($_POST['action']) && $_POST['action'] == 'dean_approve' && isset($_SESSION['office']) && $_SESSION['office'] == 'Dean') {
         $student_id = sanitize($_POST['student_id']);
+        $osa_check = $conn->query("SELECT COUNT(*) AS c FROM chmsu_clearance_status WHERE student_id='$student_id' AND office_name='OSA' AND status='clear'");
+        if (!$osa_check || intval($osa_check->fetch_assoc()['c']) === 0) {
+            $error = "Student must first be approved by OSA before Dean can take action!";
+            header("Location: " . $_SERVER['PHP_SELF'] . "?officesection=submissions");
+            exit;
+        }
         $studentInfo = $conn->query("SELECT chmsu_course, chmsu_year, chmsu_section FROM chmsu_students_master WHERE chmsu_student_id='$student_id'");
         $studentData = $studentInfo->fetch_assoc();
         $course = $studentData['chmsu_course'];
@@ -737,6 +743,12 @@ function handleActions($conn, &$error, &$success) {
     // ============================================
     if (isset($_POST['action']) && $_POST['action'] == 'dean_decline' && isset($_SESSION['office']) && $_SESSION['office'] == 'Dean') {
         $student_id = sanitize($_POST['student_id']);
+        $osa_check = $conn->query("SELECT COUNT(*) AS c FROM chmsu_clearance_status WHERE student_id='$student_id' AND office_name='OSA' AND status='clear'");
+        if (!$osa_check || intval($osa_check->fetch_assoc()['c']) === 0) {
+            $error = "Student must first be approved by OSA before Dean can take action!";
+            header("Location: " . $_SERVER['PHP_SELF'] . "?officesection=submissions");
+            exit;
+        }
         $reason = sanitize($_POST['reason']);
         $studentInfo = $conn->query("SELECT chmsu_course, chmsu_year, chmsu_section FROM chmsu_students_master WHERE chmsu_student_id='$student_id'");
         $studentData = $studentInfo->fetch_assoc();
@@ -1722,6 +1734,65 @@ function exportToWordReport($data, $filename, $headers, $report_title = '', $sub
     
     echo '<div class="footer">This is a system-generated report. No signature is required.</div>';
     echo '</body></html>';
+    exit;
+}
+
+function exportToPdfReport($data, $filename, $headers, $report_title = '', $subtitle = '') {
+    if (file_exists(__DIR__ . '/../vendor/tecnickcom/tcpdf/tcpdf.php')) {
+        require_once __DIR__ . '/../vendor/tecnickcom/tcpdf/tcpdf.php';
+    } elseif (file_exists('C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php')) {
+        require_once 'C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php';
+    }
+    
+    while (ob_get_level()) { ob_end_clean(); }
+    
+    $pdf = new TCPDF('L', 'mm', 'A4', true, 'UTF-8', false);
+    $pdf->SetCreator('CHMSU E-Clearance System');
+    $pdf->SetAuthor('CHMSU');
+    $pdf->SetTitle($filename);
+    $pdf->setPrintHeader(false);
+    $pdf->setPrintFooter(false);
+    $pdf->SetMargins(15, 15, 15);
+    $pdf->SetAutoPageBreak(TRUE, 15);
+    $pdf->SetFont('helvetica', '', 9);
+    $pdf->AddPage();
+    
+    $html = '<div style="text-align:center;">'
+          . '<div style="font-size:16pt;font-weight:bold;text-transform:uppercase;">CARLOS HILADO MEMORIAL STATE UNIVERSITY</div>'
+          . '<div style="font-size:10pt;">Talisay City, Negros Occidental, Philippines</div>'
+          . '<div style="font-size:13pt;font-weight:bold;margin-top:10px;text-transform:uppercase;">' . (!empty($report_title) ? htmlspecialchars($report_title) : htmlspecialchars($filename)) . '</div>';
+    if (!empty($subtitle)) {
+        $html .= '<div style="font-size:10pt;font-style:italic;margin-top:4px;">' . htmlspecialchars($subtitle) . '</div>';
+    }
+    $html .= '</div><br>';
+    
+    $html .= '<table border="0" cellpadding="2" style="font-size:9pt;width:100%;">'
+          . '<tr><td><b>Date Generated:</b> ' . date('F d, Y') . '</td><td style="text-align:right;"><b>Total Records:</b> ' . count($data) . '</td></tr>'
+          . '</table><br>';
+          
+    $html .= '<table border="1" cellpadding="5" style="border-collapse:collapse;width:100%;font-size:9pt;">'
+          . '<thead><tr style="background-color:#eee;font-weight:bold;text-align:center;">';
+    foreach ($headers as $h) {
+        $html .= '<th>' . htmlspecialchars($h) . '</th>';
+    }
+    $html .= '</tr></thead><tbody>';
+    
+    if (empty($data)) {
+        $html .= '<tr><td colspan="' . count($headers) . '" style="text-align:center;padding:15px;">No records found.</td></tr>';
+    } else {
+        foreach ($data as $row) {
+            $html .= '<tr>';
+            foreach ($row as $cell) {
+                $html .= '<td>' . (is_null($cell) || $cell === '' ? '-' : htmlspecialchars($cell)) . '</td>';
+            }
+            $html .= '</tr>';
+        }
+    }
+    $html .= '</tbody></table><br>';
+    $html .= '<div style="text-align:center;font-size:8pt;font-style:italic;">This is a system-generated report. No signature is required.</div>';
+    
+    $pdf->writeHTML($html, true, false, true, false, '');
+    $pdf->Output($filename . '.pdf', 'D');
     exit;
 }
 

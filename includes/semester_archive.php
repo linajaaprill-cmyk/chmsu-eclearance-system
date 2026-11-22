@@ -277,6 +277,20 @@ if (!function_exists('sa_getCurrentSemester')) {
                           archived_at = NULL, archived_by = NULL, archived_reason = NULL
                       WHERE id = $targetId");
 
+        // Sync current school year to match the active semester
+        if (!empty($target['school_year_id'])) {
+            $targetSyId = intval($target['school_year_id']);
+            $conn->query("UPDATE chmsu_school_years SET is_current = 0");
+            $conn->query("UPDATE chmsu_school_years SET is_current = 1 WHERE id = $targetSyId");
+        }
+
+        // Sync current school year to match the active semester
+        if (!empty($target['school_year_id'])) {
+            $targetSyId = intval($target['school_year_id']);
+            $conn->query("UPDATE chmsu_school_years SET is_current = 0");
+            $conn->query("UPDATE chmsu_school_years SET is_current = 1 WHERE id = $targetSyId");
+        }
+
         // 3. Fresh pending clearances
         sa_seedClearanceForSemester($conn, $targetId);
 
@@ -317,6 +331,13 @@ if (!function_exists('sa_getCurrentSemester')) {
                       SET is_current = 1, is_active = 1,
                           archived_at = NULL, archived_by = NULL, archived_reason = NULL
                       WHERE id = $targetId");
+
+        // Sync current school year to match the active semester
+        if (!empty($target['school_year_id'])) {
+            $targetSyId = intval($target['school_year_id']);
+            $conn->query("UPDATE chmsu_school_years SET is_current = 0");
+            $conn->query("UPDATE chmsu_school_years SET is_current = 1 WHERE id = $targetSyId");
+        }
 
         sa_seedClearanceForSemester($conn, $targetId);
 

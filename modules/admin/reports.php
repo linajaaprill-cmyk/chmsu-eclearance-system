@@ -208,6 +208,9 @@ $tdCls   = 'px-3 py-1.5 text-sm text-gray-800 border border-gray-300 dark:text-n
         <a href="modules/admin/reports_export.php?export_type=word" class="inline-flex justify-center items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-brand text-white hover:bg-brand-light shadow-sm">
             <i class="fas fa-file-word"></i> Export Word
         </a>
+        <a href="modules/admin/reports_export.php?export_type=pdf" class="inline-flex justify-center items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-rose-600 text-white hover:bg-rose-700 shadow-sm">
+            <i class="fas fa-file-pdf"></i> Export PDF
+        </a>
     </div>
 
     <!-- REPORT PAPER (View First) -->

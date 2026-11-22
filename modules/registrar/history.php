@@ -253,13 +253,14 @@ foreach ($groupedBySY as $syKey => $list) {
         }
 
         /* ============================================ */
-        /* FULL FEED SCREEN (view=feed)                 */
+        /* FULL FEED SCREEN (view=feed) - MODERN UI     */
         /* ============================================ */
         .feed-screen-header {
             background: white; padding: 18px 22px;
             border: 1px solid #ddd;
             border-left: 5px solid #3498db;
             margin-bottom: 20px;
+            border-radius: 6px;
         }
         .feed-screen-title {
             font-size: 18px; font-weight: 700; color: #1b4d3e;
@@ -276,53 +277,142 @@ foreach ($groupedBySY as $syKey => $list) {
         .feed-screen-stats .num { font-size: 18px; font-weight: 700; color: #1b4d3e; }
         .feed-screen-stats .lbl { font-size: 10px; color: #777; text-transform: uppercase; letter-spacing: 0.4px; }
 
-        .feed-post-box {
-            background: #fafbfc;
-            border: 1px solid #e5e7ea;
-            border-left: 4px solid #f39c12;
-            border-radius: 6px;
-            padding: 14px 18px;
-            margin-bottom: 14px;
+        .feed-search-wrap {
+            position: relative;
+            margin-bottom: 18px;
+        }
+        .feed-search-wrap i {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #888;
+            font-size: 14px;
+        }
+        .feed-search-wrap input {
+            width: 100%;
+            padding: 10px 14px 10px 38px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
             font-size: 13px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+            background: white;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
         }
-        .feed-post-box:last-child { margin-bottom: 0; }
-        .feed-post-box.priority-urgent { border-left-color: #8e44ad; background: #faf5fc; }
-        .feed-post-box.priority-high   { border-left-color: #e74c3c; background: #fdf3f2; }
-        .feed-post-box.priority-medium { border-left-color: #f39c12; }
-        .feed-post-box.priority-low    { border-left-color: #3498db; }
+        .feed-search-wrap input:focus {
+            border-color: #1b4d3e;
+            box-shadow: 0 0 0 3px rgba(27,77,62,0.1);
+        }
 
-        .feed-post-box-header {
-            display: flex; justify-content: space-between;
-            align-items: flex-start; gap: 10px; flex-wrap: wrap;
-            margin-bottom: 6px;
+        .feed-card-modern {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 18px 22px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+            transition: transform 0.2s, box-shadow 0.2s;
         }
-        .feed-post-box-title { font-size: 15px; font-weight: 700; color: #1b4d3e; line-height: 1.3; }
-        .feed-post-box-meta {
-            font-size: 11px; color: #888;
-            display: inline-flex; align-items: center;
-            gap: 12px; flex-wrap: wrap;
+        .feed-card-modern:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+            transform: translateY(-1px);
+        }
+        .feed-card-modern.priority-urgent { border-left: 5px solid #8e44ad; }
+        .feed-card-modern.priority-high   { border-left: 5px solid #e74c3c; }
+        .feed-card-modern.priority-medium { border-left: 5px solid #f39c12; }
+        .feed-card-modern.priority-low    { border-left: 5px solid #1b4d3e; }
+
+        .feed-card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .feed-card-badges {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .feed-office-tag {
+            background: #eef7f2;
+            color: #1b4d3e;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .feed-priority-pill {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .feed-priority-pill.urgent { background: #f3e8ff; color: #6b21a8; }
+        .feed-priority-pill.high   { background: #fee2e2; color: #991b1b; }
+        .feed-priority-pill.medium { background: #fef3c7; color: #92400e; }
+        .feed-priority-pill.low    { background: #e0f2fe; color: #075985; }
+
+        .feed-date-tag {
+            font-size: 11px;
+            color: #888;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .feed-card-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1b4d3e;
             margin-bottom: 8px;
+            line-height: 1.35;
         }
-        .feed-post-box-meta strong { color: #1b4d3e; font-weight: 600; }
+        .feed-card-body-text {
+            font-size: 13px;
+            color: #374151;
+            line-height: 1.7;
+            word-break: break-word;
+            padding-top: 10px;
+            border-top: 1px solid #f3f4f6;
+        }
 
-        .feed-post-box-content {
-            font-size: 13px; color: #444; line-height: 1.65;
-            white-space: pre-wrap; word-wrap: break-word;
-            padding: 10px 0 0 0;
-            border-top: 1px dashed #eee;
-            margin-top: 6px;
-        }
+        .section-separator-box { margin: 12px 0; padding: 12px 14px; background: #f0f7ff; border: 1px solid #d0e3f7; border-radius: 8px; }
+        .section-separator-box .sec-label { font-weight: 700; color: #1b4d3e; font-size: 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+        .section-separator-box .sec-names { display: flex; flex-wrap: wrap; gap: 6px; }
+        .sec-name { display: inline-flex; align-items: center; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 3px 10px; font-size: 11.5px; color: #334155; line-height: 1.3; font-weight: 500; }
+        .sec-name i { font-size: 10px; margin-right: 4px; color: #1b4d3e; }
 
-        .priority-badge {
-            font-size: 9px; padding: 2px 8px; border-radius: 8px;
-            font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.4px; flex-shrink: 0;
-        }
-        .priority-badge.low      { background: #d6eaf8; color: #1b4d3e; }
-        .priority-badge.medium   { background: #fdebd0; color: #935116; }
-        .priority-badge.high     { background: #fadbd8; color: #922b21; }
-        .priority-badge.urgent   { background: #e8daef; color: #6c3483; }
+        .course-separator-box { margin: 12px 0; padding: 12px 16px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; }
+        .course-separator-box .course-label { font-weight: 700; color: #7e22ce; font-size: 13px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #e9d5ff; display: flex; align-items: center; gap: 6px; }
+        .course-separator-box .course-subgroup { margin: 8px 0; padding: 8px 12px; background: #ffffff; border: 1px solid #f3e8ff; border-left: 3px solid #9333ea; border-radius: 6px; }
+        .course-separator-box .course-sub-label { font-weight: 700; color: #6b21a8; font-size: 11px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .3px; }
+        .course-separator-box .course-sub-names { display: flex; flex-wrap: wrap; gap: 6px; }
+
+        .mention-section { margin-top: 10px; padding: 10px 14px; background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; font-size: 12px; }
+        .mention-section .mention-title { font-weight: 700; color: #92400e; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+        .mention-section .mention-names-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+        .mention-section .mention-pill { display: inline-flex; align-items: center; background: #ffffff; border: 1px solid #fcd34d; border-radius: 12px; padding: 2px 8px; font-size: 11px; color: #78350f; font-weight: 600; }
+        .mention-section .mention-pill i { font-size: 9px; margin-right: 4px; color: #d97706; }
+
+        body.dark-mode .section-separator-box { background: #1a2c3a; border-color: #2c4a6a; }
+        body.dark-mode .section-separator-box .sec-label { color: #f1c40f; }
+        body.dark-mode .section-separator-box .sec-names { color: #ddd; }
+        body.dark-mode .sec-name { background: #1e293b; border-color: #475569; color: #e2e8f0; }
+        body.dark-mode .sec-name i { color: #f1c40f; }
+        body.dark-mode .course-separator-box { background: #241a3a; border-color: #4a3a6a; }
+        body.dark-mode .course-separator-box .course-label { color: #d5b3ff; border-bottom-color: #4a3a6a; }
+        body.dark-mode .course-separator-box .course-subgroup { background: #1e1b2e; border-color: #3b2d54; }
+        body.dark-mode .course-separator-box .course-sub-label { color: #c39bd3; }
+        body.dark-mode .mention-section { background: #2a2113; border-color: #4d3810; }
+        body.dark-mode .mention-section .mention-title { color: #fde68a; }
+        body.dark-mode .mention-section .mention-pill { background: #1e1a12; border-color: #634812; color: #fef3c7; }
 
         .no-feed-msg-box {
             text-align: center; color: #999; font-size: 13px;
@@ -339,6 +429,126 @@ foreach ($groupedBySY as $syKey => $list) {
             border: 1px solid #ddd;
             border-left: 5px solid #1b4d3e;
             margin-bottom: 20px;
+            border-radius: 6px;
+        }
+
+        /* Filter Card in History List View */
+        .filter-card {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            overflow: visible;
+        }
+        .filter-card-header {
+            background: #f8f9fa;
+            padding: 10px 16px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #1b4d3e;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-card-body {
+            padding: 16px;
+        }
+        .filter-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: flex-end;
+        }
+        .filter-grid .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            flex: 1;
+            min-width: 140px;
+        }
+        .filter-grid label {
+            font-size: 11px;
+            font-weight: 700;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .filter-grid select,
+        .filter-grid input {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 13px;
+            background: white;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .filter-grid select:focus,
+        .filter-grid input:focus {
+            border-color: #1b4d3e;
+        }
+        .suggestions-box {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+            z-index: 1000;
+            display: none;
+            max-height: 220px;
+            overflow-y: auto;
+            margin-top: 4px;
+        }
+        .suggestion-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.15s;
+        }
+        .suggestion-item:last-child { border-bottom: none; }
+        .suggestion-item:hover {
+            background: #eef7f2;
+        }
+        .suggestion-item .sugg-name {
+            font-size: 13px;
+            font-weight: 700;
+            color: #1b4d3e;
+        }
+        .suggestion-item .sugg-sub {
+            font-size: 11px;
+            color: #666;
+            margin-top: 2px;
+        }
+        .suggestion-none {
+            padding: 10px 12px;
+            font-size: 12px;
+            color: #888;
+            text-align: center;
+            font-style: italic;
+        }
+        .btn-reset {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: 700;
+            transition: background 0.2s;
+            height: 35px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .btn-reset:hover {
+            background: #c0392b;
         }
 
         /* Simple grouped table */
@@ -543,7 +753,13 @@ foreach ($groupedBySY as $syKey => $list) {
                 </div>
             </div>
 
+            <div class="feed-search-wrap">
+                <i class="fas fa-search"></i>
+                <input type="text" id="feedSearchInput" placeholder="Search advisories by subject, office, content, or priority..." oninput="filterFeedHistory(this.value)">
+            </div>
+
             <?php if ($feedCount > 0): ?>
+                <div id="feedPostsContainer">
                 <?php foreach ($feedPosts as $post):
                     $priority = isset($post['priority']) ? strtolower($post['priority']) : 'low';
                     if (!in_array($priority, ['low','medium','high','urgent'])) $priority = 'low';
@@ -551,29 +767,154 @@ foreach ($groupedBySY as $syKey => $list) {
                     $content = isset($post['content']) ? $post['content'] : '';
                     $officeName = isset($post['office_name']) ? $post['office_name'] : '—';
                     $createdAt = isset($post['created_at']) ? $post['created_at'] : '';
+
+                    // Parse mentions
+                    $mentionedNames = array();
+                    if (preg_match_all('/(?:👥|ðŸ‘¥)?\s*Mentioned:\s*(.*?)(?:\n|$)/u', $content, $matches)) {
+                        $namesStr = trim($matches[1][0] ?? '');
+                        if (!empty($namesStr)) {
+                            if (strpos($namesStr, '|||') !== false) {
+                                $mentionedNames = array_map('trim', explode('|||', $namesStr));
+                            } else {
+                                $mentionedNames = array(trim($namesStr));
+                            }
+                        }
+                    }
+                    $mentionedNames = array_values(array_unique(array_filter($mentionedNames)));
+
+                    $sectionBlocks = array();
+                    if (preg_match('/=== SECTION MENTION ===(.*?)=== END SECTION ===/s', $content, $smatch)) {
+                        $inner = trim($smatch[1]);
+                        $inner = str_replace(["\r\n", "\r"], "\n", $inner);
+                        $inner = str_replace("\n---SEP---", "", $inner);
+                        $lines = explode("\n", $inner);
+                        $currentLabel = '';
+                        foreach ($lines as $line) {
+                            $line = rtrim($line);
+                            if (preg_match('/^\[(.+)\]$/', trim($line), $lm)) {
+                                $currentLabel = $lm[1];
+                                $sectionBlocks[$currentLabel] = array();
+                            } elseif (substr($line, 0, 2) === '- ' && $currentLabel !== '') {
+                                $sectionBlocks[$currentLabel][] = substr($line, 2);
+                            }
+                        }
+                    }
+
+                    $courseBlocks = array();
+                    if (preg_match('/=== COURSE MENTION ===(.*?)=== END COURSE ===/s', $content, $cmatch)) {
+                        $cInner = trim($cmatch[1]);
+                        $cInner = str_replace(["\r\n", "\r"], "\n", $cInner);
+                        $cInner = str_replace("\n---SEP---", "", $cInner);
+                        $cInner = str_replace("\n---COURSE-SEP---", "", $cInner);
+                        $cLines = explode("\n", $cInner);
+                        $currentCourse = '';
+                        $currentSub = '';
+                        foreach ($cLines as $line) {
+                            $line = rtrim($line);
+                            if (preg_match('/^\{(.+)\}$/', trim($line), $cm)) {
+                                $currentCourse = $cm[1];
+                                $courseBlocks[$currentCourse] = array();
+                                $currentSub = '';
+                            } elseif (preg_match('/^<(.+)>$/', trim($line), $sm)) {
+                                $currentSub = $sm[1];
+                                if ($currentCourse !== '') $courseBlocks[$currentCourse][$currentSub] = array();
+                            } elseif (substr($line, 0, 2) === '- ' && $currentCourse !== '' && $currentSub !== '') {
+                                $courseBlocks[$currentCourse][$currentSub][] = substr($line, 2);
+                            }
+                        }
+                    }
+
+                    $cleanContent = preg_replace('/[\r\n]*=== SECTION MENTION ===.*?=== END SECTION ===[\r\n]*/s', '', $content);
+                    $cleanContent = preg_replace('/[\r\n]*=== COURSE MENTION ===.*?=== END COURSE ===[\r\n]*/s', '', $cleanContent);
+                    $cleanContent = preg_replace('/[\r\n]*(?:👥|ðŸ‘¥)?\s*Mentioned: .*/u', '', $cleanContent);
+                    $cleanContent = preg_replace('/---(?:COURSE-)?SEP---/', '', $cleanContent);
+                    $cleanContent = preg_replace('/===\s*(?:END\s+)?(?:COURSE|SECTION)\s*===/', '', $cleanContent);
+                    $cleanContent = trim($cleanContent);
+
+                    $searchBlob = strtolower($title . ' ' . $cleanContent . ' ' . $officeName . ' ' . $priority);
                 ?>
-                <div class="feed-post-box priority-<?php echo $priority; ?>">
-                    <div class="feed-post-box-header">
-                        <div class="feed-post-box-title">
-                            <?php echo htmlspecialchars($title); ?>
+                <div class="feed-card-modern priority-<?php echo $priority; ?>" data-search="<?php echo htmlspecialchars($searchBlob, ENT_QUOTES); ?>">
+                    <div class="feed-card-top">
+                        <div class="feed-card-badges">
+                            <span class="feed-office-tag"><i class="fas fa-building"></i> <?php echo htmlspecialchars($officeName); ?></span>
+                            <span class="feed-priority-pill <?php echo $priority; ?>"><?php echo strtoupper($priority); ?></span>
+                            <?php if (!empty($mentionedNames)): ?>
+                                <span class="feed-office-tag" style="background:#fef3c7; color:#92400e;"><i class="fas fa-user-tag"></i> <?php echo count($mentionedNames); ?> mentioned</span>
+                            <?php endif; ?>
+                            <?php if (!empty($courseBlocks)): ?>
+                                <span class="feed-office-tag" style="background:#f3e8ff; color:#6b21a8;"><i class="fas fa-graduation-cap"></i> Course Mentions</span>
+                            <?php elseif (!empty($sectionBlocks)): ?>
+                                <span class="feed-office-tag" style="background:#e0f2fe; color:#075985;"><i class="fas fa-users"></i> <?php echo count($sectionBlocks); ?> sections</span>
+                            <?php endif; ?>
                         </div>
-                        <span class="priority-badge <?php echo $priority; ?>">
-                            <?php echo strtoupper($priority); ?>
-                        </span>
-                    </div>
-                    <div class="feed-post-box-meta">
-                        <span><strong><i class="fas fa-building"></i> <?php echo htmlspecialchars($officeName); ?></strong></span>
                         <?php if ($createdAt): ?>
-                            <span><i class="fas fa-clock"></i> <?php echo date('M d, Y h:i A', strtotime($createdAt)); ?></span>
+                            <span class="feed-date-tag"><i class="far fa-clock"></i> <?php echo date('M d, Y · h:i A', strtotime($createdAt)); ?></span>
                         <?php endif; ?>
                     </div>
-                    <?php if (!empty($content)): ?>
-                        <div class="feed-post-box-content">
-                            <?php echo nl2br(htmlspecialchars($content)); ?>
-                        </div>
-                    <?php endif; ?>
+                    <div class="feed-card-title">
+                        <?php echo htmlspecialchars($title); ?>
+                    </div>
+                    <div class="feed-card-body-text">
+                        <?php if (!empty($cleanContent)): ?>
+                            <div style="margin-bottom: 10px; color: #374151;"><?php echo nl2br(htmlspecialchars($cleanContent)); ?></div>
+                        <?php endif; ?>
+
+                        <?php if (!empty($courseBlocks)): ?>
+                            <?php foreach ($courseBlocks as $courseName => $subgroups): ?>
+                                <div class="course-separator-box">
+                                    <div class="course-label"><i class="fas fa-graduation-cap"></i> <?php echo htmlspecialchars($courseName); ?></div>
+                                    <?php foreach ($subgroups as $subLabel => $names): ?>
+                                        <div class="course-subgroup">
+                                            <div class="course-sub-label">
+                                                <span><?php echo htmlspecialchars($subLabel); ?></span>
+                                                <span style="font-size: 10px; font-weight: normal; opacity: 0.8;">(<?php echo count($names); ?> students)</span>
+                                            </div>
+                                            <div class="course-sub-names">
+                                                <?php foreach ($names as $n): ?>
+                                                    <span class="sec-name"><i class="fas fa-user-graduate"></i><?php echo htmlspecialchars($n); ?></span>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+
+                        <?php if (!empty($sectionBlocks)): ?>
+                            <?php foreach ($sectionBlocks as $label => $names): ?>
+                                <div class="section-separator-box">
+                                    <div class="sec-label">
+                                        <i class="fas fa-users"></i>
+                                        <span><?php echo htmlspecialchars($label); ?></span>
+                                        <span style="font-size: 10px; font-weight: normal; opacity: 0.8;">(<?php echo count($names); ?> students)</span>
+                                    </div>
+                                    <div class="sec-names">
+                                        <?php foreach ($names as $n): ?>
+                                            <span class="sec-name"><i class="fas fa-user-graduate"></i><?php echo htmlspecialchars($n); ?></span>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+
+                        <?php if (!empty($mentionedNames)): ?>
+                            <div class="mention-section">
+                                <div class="mention-title"><i class="fas fa-user-tag"></i> Individually Mentioned Students (<?php echo count($mentionedNames); ?>):</div>
+                                <div class="mention-names-grid">
+                                    <?php foreach ($mentionedNames as $name): ?>
+                                        <span class="mention-pill"><i class="fas fa-user"></i><?php echo htmlspecialchars($name); ?></span>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endif; ?>
+                    </div>
                 </div>
                 <?php endforeach; ?>
+                </div>
+                <div id="noFeedMatchBox" class="no-feed-msg-box" style="display: none;">
+                    <i class="fas fa-search"></i>
+                    No advisories match your search query.
+                </div>
             <?php else: ?>
                 <div class="no-feed-msg-box">
                     <i class="fas fa-inbox"></i>
@@ -648,14 +989,36 @@ foreach ($groupedBySY as $syKey => $list) {
             });
 
             // Sort students inside each group by Last, First
+            $allAvailableCourses = [];
+            $allAvailableSections = [];
+            $studentSearchData = [];
+
             foreach ($groups as &$g) {
+                if (!empty($g['course']) && !in_array($g['course'], $allAvailableCourses)) {
+                    $allAvailableCourses[] = $g['course'];
+                }
+                if (!empty($g['section']) && $g['section'] !== '—' && !in_array($g['section'], $allAvailableSections)) {
+                    $allAvailableSections[] = $g['section'];
+                }
                 usort($g['students'], function($a, $b) {
                     $c = strcasecmp($a['chmsu_last_name'], $b['chmsu_last_name']);
                     if ($c !== 0) return $c;
                     return strcasecmp($a['chmsu_first_name'], $b['chmsu_first_name']);
                 });
+                foreach ($g['students'] as $st) {
+                    $sName = trim($st['chmsu_last_name'] . ', ' . $st['chmsu_first_name']);
+                    $studentSearchData[] = [
+                        'id' => $st['chmsu_student_id'],
+                        'name' => $sName,
+                        'course' => $g['course'],
+                        'year' => $g['year'],
+                        'section' => $g['section']
+                    ];
+                }
             }
             unset($g);
+            sort($allAvailableCourses);
+            sort($allAvailableSections);
 
             // Pretty year label
             $ordinalYear = function($y) {
@@ -690,7 +1053,7 @@ foreach ($groupedBySY as $syKey => $list) {
 
                 <div class="stat-row" style="margin-top: 14px; padding-top: 14px; border-top: 1px dashed #ddd;">
                     <div class="stat-item">
-                        <span class="stat-num"><?php echo $totalStudentCount; ?></span>
+                        <span class="stat-num" id="statTotalStudents"><?php echo $totalStudentCount; ?></span>
                         <span class="stat-lbl">Total Students</span>
                     </div>
                     <div class="stat-item">
@@ -708,12 +1071,60 @@ foreach ($groupedBySY as $syKey => $list) {
                 </div>
             </div>
 
+            <!-- ============================================ -->
+            <!-- FILTER & SEARCH BAR WITH AUTOCOMPLETE         -->
+            <!-- ============================================ -->
+            <div class="filter-card">
+                <div class="filter-card-header"><i class="fas fa-filter"></i> Filter &amp; Search Students</div>
+                <div class="filter-card-body">
+                    <div class="filter-grid">
+                        <div class="form-group">
+                            <label><i class="fas fa-graduation-cap"></i> Course</label>
+                            <select id="filterCourse" onchange="applyStudentFilters()">
+                                <option value="">All Courses</option>
+                                <?php foreach ($allAvailableCourses as $c): ?>
+                                    <option value="<?php echo htmlspecialchars($c); ?>"><?php echo htmlspecialchars($c); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-layer-group"></i> Year Level</label>
+                            <select id="filterYear" onchange="applyStudentFilters()">
+                                <option value="">All Years</option>
+                                <option value="1">1st Year</option>
+                                <option value="2">2nd Year</option>
+                                <option value="3">3rd Year</option>
+                                <option value="4">4th Year</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-th-large"></i> Section</label>
+                            <select id="filterSection" onchange="applyStudentFilters()">
+                                <option value="">All Sections</option>
+                                <?php foreach ($allAvailableSections as $sec): ?>
+                                    <option value="<?php echo htmlspecialchars($sec); ?>">Section <?php echo htmlspecialchars($sec); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="form-group search-group" style="position: relative; flex: 2; min-width: 240px;">
+                            <label><i class="fas fa-search"></i> Student Search</label>
+                            <input type="text" id="studentSearchInput" placeholder="Type student name or ID..." autocomplete="off" oninput="onStudentSearchInput(this.value)">
+                            <div id="studentSearchSuggestions" class="suggestions-box"></div>
+                        </div>
+                        <div class="form-group btn-group" style="align-self: flex-end; flex: 0;">
+                            <button type="button" class="btn-reset" onclick="resetStudentFilters()"><i class="fas fa-undo"></i> Reset</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <?php if (empty($groups)): ?>
                 <div class="empty-state">
                     <i class="fas fa-user-slash"></i>
                     <p>No students found for this semester.</p>
                 </div>
             <?php else: ?>
+                <div id="rosterCardsContainer">
                 <?php foreach ($groups as $g):
                     $courseCode = $g['course'];
                     $yearLabel = $ordinalYear($g['year']);
@@ -721,7 +1132,7 @@ foreach ($groupedBySY as $syKey => $list) {
                     $studentCount = count($g['students']);
                     $groupTitle = $courseCode . ' — ' . $yearLabel . ' — Section ' . $sectionLabel;
                 ?>
-                <div class="roster-simple">
+                <div class="roster-simple" data-course="<?php echo htmlspecialchars($courseCode); ?>" data-year="<?php echo $g['year']; ?>" data-section="<?php echo htmlspecialchars($sectionLabel); ?>">
                     <div class="roster-simple-title">
                         <i class="fas fa-users"></i>
                         <?php echo htmlspecialchars($groupTitle); ?>
@@ -753,7 +1164,7 @@ foreach ($groupedBySY as $syKey => $list) {
                                     $badgeText = 'Not Cleared';
                                 }
                             ?>
-                            <tr>
+                            <tr data-name="<?php echo htmlspecialchars(strtolower($fullName)); ?>" data-id="<?php echo htmlspecialchars(strtolower($st['chmsu_student_id'])); ?>">
                                 <td class="id-cell"><code><?php echo htmlspecialchars($st['chmsu_student_id']); ?></code></td>
                                 <td class="name-cell"><?php echo htmlspecialchars($fullName); ?></td>
                                 <td class="progress-cell"><?php echo $cleared; ?> / <?php echo $totalOffices; ?></td>
@@ -764,6 +1175,12 @@ foreach ($groupedBySY as $syKey => $list) {
                     </table>
                 </div>
                 <?php endforeach; ?>
+                </div>
+
+                <div id="noStudentMatchBox" class="empty-state" style="display: none; border-radius: 8px;">
+                    <i class="fas fa-search"></i>
+                    <p>No students match your filter criteria.</p>
+                </div>
             <?php endif; ?>
 
         <?php else: ?>
@@ -914,6 +1331,163 @@ foreach ($groupedBySY as $syKey => $list) {
             else counter.textContent = visibleCount + ' match' + (visibleCount === 1 ? '' : 'es');
         }
     }
+
+    // ============================================
+    // FEED SEARCH IN HISTORY (view=feed)
+    // ============================================
+    function filterFeedHistory(val) {
+        var q = (val || '').toLowerCase().trim();
+        var cards = document.querySelectorAll('#feedPostsContainer .feed-card-modern');
+        var visible = 0;
+
+        cards.forEach(function(card) {
+            var text = (card.getAttribute('data-search') || '').toLowerCase();
+            var show = !q || text.indexOf(q) !== -1;
+            card.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+
+        var noMatch = document.getElementById('noFeedMatchBox');
+        if (noMatch) {
+            noMatch.style.display = (visible === 0 && cards.length > 0) ? 'block' : 'none';
+        }
+    }
+
+    // ============================================
+    // STUDENT FILTER & AUTOCOMPLETE (view=list)
+    // ============================================
+    var studentRoster = <?php echo !empty($studentSearchData) ? json_encode($studentSearchData) : '[]'; ?>;
+
+    function onStudentSearchInput(val) {
+        var q = (val || '').toLowerCase().trim();
+        var box = document.getElementById('studentSearchSuggestions');
+        if (!box) return;
+
+        if (q.length < 1) {
+            box.innerHTML = '';
+            box.style.display = 'none';
+            applyStudentFilters();
+            return;
+        }
+
+        var matches = studentRoster.filter(function(st) {
+            return st.name.toLowerCase().indexOf(q) !== -1 || st.id.toLowerCase().indexOf(q) !== -1;
+        }).slice(0, 6);
+
+        if (matches.length > 0) {
+            var html = '';
+            matches.forEach(function(m) {
+                var safeName = m.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                html += '<div class="suggestion-item" onclick="selectStudentSuggestion(\'' + safeName + '\')">' +
+                        '<div class="sugg-name"><i class="fas fa-user-graduate"></i> ' + escapeHtml(m.name) + '</div>' +
+                        '<div class="sugg-sub">' + escapeHtml(m.id) + ' · ' + escapeHtml(m.course) + ' ' + m.year + '-' + escapeHtml(m.section) + '</div>' +
+                        '</div>';
+            });
+            box.innerHTML = html;
+            box.style.display = 'block';
+        } else {
+            box.innerHTML = '<div class="suggestion-none">No matching student found</div>';
+            box.style.display = 'block';
+        }
+
+        applyStudentFilters();
+    }
+
+    function selectStudentSuggestion(name) {
+        var inp = document.getElementById('studentSearchInput');
+        if (inp) inp.value = name;
+        var box = document.getElementById('studentSearchSuggestions');
+        if (box) box.style.display = 'none';
+        applyStudentFilters();
+    }
+
+    function applyStudentFilters() {
+        var courseEl = document.getElementById('filterCourse');
+        var yearEl = document.getElementById('filterYear');
+        var secEl = document.getElementById('filterSection');
+        var searchEl = document.getElementById('studentSearchInput');
+
+        var course = courseEl ? courseEl.value.toUpperCase().trim() : '';
+        var year = yearEl ? yearEl.value.trim() : '';
+        var section = secEl ? secEl.value.toUpperCase().trim() : '';
+        var query = searchEl ? searchEl.value.toLowerCase().trim() : '';
+
+        var totalVisible = 0;
+
+        document.querySelectorAll('#rosterCardsContainer .roster-simple').forEach(function(card) {
+            var c = (card.getAttribute('data-course') || '').toUpperCase().trim();
+            var y = (card.getAttribute('data-year') || '').trim();
+            var s = (card.getAttribute('data-section') || '').toUpperCase().trim();
+
+            var groupMatches = true;
+            if (course && c !== course) groupMatches = false;
+            if (year && y !== year) groupMatches = false;
+            if (section && s !== section) groupMatches = false;
+
+            var visibleInGroup = 0;
+            card.querySelectorAll('tbody tr').forEach(function(row) {
+                if (!groupMatches) {
+                    row.style.display = 'none';
+                    return;
+                }
+
+                var name = (row.getAttribute('data-name') || '').toLowerCase();
+                var id = (row.getAttribute('data-id') || '').toLowerCase();
+
+                var textMatches = !query || name.indexOf(query) !== -1 || id.indexOf(query) !== -1;
+                if (textMatches) {
+                    row.style.display = '';
+                    visibleInGroup++;
+                    totalVisible++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            if (groupMatches && visibleInGroup > 0) {
+                card.style.display = '';
+                var countBadge = card.querySelector('.group-count');
+                if (countBadge) countBadge.textContent = visibleInGroup + ' student' + (visibleInGroup !== 1 ? 's' : '');
+            } else {
+                card.style.display = 'none';
+            }
+        });
+
+        var noMatch = document.getElementById('noStudentMatchBox');
+        if (noMatch) {
+            noMatch.style.display = totalVisible === 0 ? 'block' : 'none';
+        }
+
+        var statTotal = document.getElementById('statTotalStudents');
+        if (statTotal) {
+            statTotal.textContent = totalVisible;
+        }
+    }
+
+    function resetStudentFilters() {
+        if (document.getElementById('filterCourse')) document.getElementById('filterCourse').value = '';
+        if (document.getElementById('filterYear')) document.getElementById('filterYear').value = '';
+        if (document.getElementById('filterSection')) document.getElementById('filterSection').value = '';
+        if (document.getElementById('studentSearchInput')) document.getElementById('studentSearchInput').value = '';
+        var box = document.getElementById('studentSearchSuggestions');
+        if (box) box.style.display = 'none';
+        applyStudentFilters();
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        var map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+        return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
+
+    // Close suggestions box when clicking outside
+    document.addEventListener('click', function(e) {
+        var box = document.getElementById('studentSearchSuggestions');
+        var inp = document.getElementById('studentSearchInput');
+        if (box && inp && !box.contains(e.target) && !inp.contains(e.target)) {
+            box.style.display = 'none';
+        }
+    });
 </script>
 
 </body>
