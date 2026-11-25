@@ -200,6 +200,9 @@ $tdCls   = 'px-3 py-1.5 text-sm text-gray-800 border border-gray-300 dark:text-n
         <span class="text-sm text-gray-600 dark:text-neutral-300"><i class="far fa-calendar-alt mr-1"></i><?php echo date('F d, Y'); ?></span>
     </div>
 
+    <!-- PDF Report Settings Customizer -->
+    <?php include __DIR__ . '/../../includes/pdf_customizer.php'; ?>
+
     <!-- Export Buttons (No Flatpickr/Period filter anymore) -->
     <div class="flex justify-end gap-2 mb-4">
         <a href="modules/admin/reports_export.php?export_type=excel" class="inline-flex justify-center items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm">

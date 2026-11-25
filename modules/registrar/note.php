@@ -39,7 +39,6 @@ $registrar_sidebar = '
         <ul class="sidebar-menu">
             <li><a href="?section=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
-            <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
             <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
             <li><a href="?section=history"><i class="fas fa-history"></i> Clearance History</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
@@ -73,7 +72,7 @@ $office_notes_html = preg_replace(
 // Ensure all navigation links stay within Registrar portal (?section=...)
 $office_notes_html = str_replace('?officesection=note', '?section=note', $office_notes_html);
 $office_notes_html = str_replace('?officesection=dashboard', '?section=dashboard', $office_notes_html);
-$office_notes_html = str_replace('?officesection=clearance', '?section=clearance', $office_notes_html);
+$office_notes_html = str_replace('?officesection=clearance', '?section=clearance_status', $office_notes_html);
 $office_notes_html = str_replace('?officesection=reports', '?section=reports', $office_notes_html);
 $office_notes_html = str_replace('?officesection=chat', '?section=chat', $office_notes_html);
 $office_notes_html = str_replace('?officesection=history', '?section=history', $office_notes_html);

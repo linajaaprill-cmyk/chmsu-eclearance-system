@@ -477,6 +477,9 @@ if ($chat_res) {
         </div>
     </div>
 
+    <!-- PDF Report Settings Customizer -->
+    <?php include __DIR__ . '/../../includes/pdf_customizer.php'; ?>
+
     <!-- ================================================= -->
     <!-- TAB 1: REPORTS VIEW (shown first) -->
     <!-- ================================================= -->

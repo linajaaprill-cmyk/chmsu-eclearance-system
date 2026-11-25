@@ -169,7 +169,6 @@ $registrar_sidebar = '
         <ul class="sidebar-menu">
             <li><a href="?section=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
-            <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
             <li><a href="?section=clearance_status" class="active"><i class="fas fa-user-check"></i> Clearance Status</a></li>
             <li><a href="?section=history"><i class="fas fa-history"></i> Clearance History</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
@@ -319,9 +318,10 @@ $rv_block = <<<'RVBLOCK'
     }
 
     function init() {
+        if (window.location.search.indexOf('view_mode=review') !== -1) return;
         // Find the main table. We no longer rely on buttons, so it works even when locked.
         var table = document.querySelector('.clearance-table') || document.querySelector('table');
-        if (!table) return;
+        if (!table || table.id === 'processedTable') return;
 
         var tbody = table.querySelector('tbody');
         if (!tbody) return;
@@ -483,6 +483,54 @@ $rv_block = <<<'RVBLOCK'
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
+
+    // WARNING UPON TAKING ACTION IF SF10, JOTR, OR PSA NOT YET CHECKED
+    document.addEventListener('DOMContentLoaded', function () {
+        var form = document.getElementById('clearanceForm');
+        if (!form) return;
+
+        var actionBtns = form.querySelectorAll('button[type="submit"][name="action"]');
+        actionBtns.forEach(function (btn) {
+            btn.addEventListener('click', function (e) {
+                if (window.location.search.indexOf('view_mode=review') !== -1) return;
+                var checked = document.querySelectorAll('.student-checkbox:checked');
+                if (!checked.length) return;
+
+                var warnings = [];
+                checked.forEach(function (cb) {
+                    var sid = cb.value;
+                    var sfCb = document.querySelector('.rv-cb[data-id="' + sid + '"][data-field="shs_sf10"]');
+                    var jotrCb = document.querySelector('.rv-cb[data-id="' + sid + '"][data-field="jotr"]');
+                    var psaCb = document.querySelector('.rv-cb[data-id="' + sid + '"][data-field="psa_birth"]');
+
+                    var hasSf = sfCb ? sfCb.checked : !!(DATA[sid] && DATA[sid].shs_sf10 == 1);
+                    var hasJotr = jotrCb ? jotrCb.checked : !!(DATA[sid] && DATA[sid].jotr == 1);
+                    var hasPsa = psaCb ? psaCb.checked : !!(DATA[sid] && DATA[sid].psa_birth == 1);
+
+                    var missing = [];
+                    if (!hasSf) missing.push('NO SF10');
+                    if (!hasJotr) missing.push('NO JOTR');
+                    if (!hasPsa) missing.push('NO PSA');
+
+                    if (missing.length > 0) {
+                        warnings.push('• ' + sid + ': ' + missing.join(', '));
+                    }
+                });
+
+                if (warnings.length > 0) {
+                    var msg = '⚠️ WARNING: The following selected student(s) have missing documents:\n\n'
+                            + warnings.slice(0, 15).join('\n')
+                            + (warnings.length > 15 ? '\n...and ' + (warnings.length - 15) + ' more.' : '')
+                            + '\n\nDo you still want to proceed?';
+                    if (!confirm(msg)) {
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                        return false;
+                    }
+                }
+            }, true); // capture phase so it warns before confirmApprove / confirmDecline
+        });
+    });
 })();
 </script>
 RVBLOCK;

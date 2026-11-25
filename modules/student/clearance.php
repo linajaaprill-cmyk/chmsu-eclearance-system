@@ -32,8 +32,8 @@ if ($has_clearance_sem_col && $current_sem_id > 0) {
 }
 
 // Get all offices with this student's clearance status for each
-// (Scoped to the CURRENT semester only — so after advancing, it resets.)
-$offices_result = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY office_name");
+// (Sorted strictly: Library -> Accounting -> OSA -> Dean -> Registrar)
+$offices_result = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY FIELD(LOWER(TRIM(office_name)), 'library', 'accounting', 'osa', 'dean', 'registrar'), office_name ASC");
 $offices = [];
 $officeStatuses = [];
 $officeNotes = [];
@@ -45,9 +45,11 @@ while ($office_row = $offices_result->fetch_assoc()) {
     $offices[] = $office;
     $totalOffices++;
 
+    $office_esc = $conn->real_escape_string($office);
+    $student_esc = $conn->real_escape_string($_SESSION['student']);
     $clearanceQ = $conn->query("SELECT status, note FROM chmsu_clearance_status 
-                                WHERE student_id='{$_SESSION['student']}' 
-                                AND office_name='$office' $sem_filter LIMIT 1");
+                                WHERE student_id='$student_esc' 
+                                AND office_name='$office_esc' $sem_filter LIMIT 1");
 
     if ($clearanceQ && $clearanceQ->num_rows > 0) {
         $row = $clearanceQ->fetch_assoc();
@@ -64,6 +66,83 @@ while ($office_row = $offices_result->fetch_assoc()) {
         $officeStatuses[$office] = 'Pending';
         $officeNotes[$office] = '';
     }
+}
+
+// Check feed mentions for this student per office (for Pending reason popup)
+$officeFeedMentions = [];
+$feedSemChk = $conn->query("SHOW COLUMNS FROM chmsu_feed LIKE 'semester_id'");
+$feedHasSem = ($feedSemChk && $feedSemChk->num_rows > 0);
+$feedSemSql = ($feedHasSem && $current_sem_id > 0) ? " AND (semester_id = $current_sem_id OR semester_id IS NULL) " : "";
+$stuFullName = trim($master['chmsu_full_name'] ?? '');
+$stuLastName = trim($master['chmsu_last_name'] ?? '');
+$stuFirstName = trim($master['chmsu_first_name'] ?? '');
+$stuIdStr = trim($_SESSION['student']);
+
+$feedQ = $conn->query("SELECT id, office_name, title, content, student_id FROM chmsu_feed WHERE 1=1 $feedSemSql ORDER BY created_at DESC");
+if ($feedQ) {
+    while ($fp = $feedQ->fetch_assoc()) {
+        $fOff = $fp['office_name'];
+        $isHit = false;
+        if (!empty($fp['student_id']) && trim($fp['student_id']) === $stuIdStr) {
+            $isHit = true;
+        } elseif (!empty($stuFullName) && stripos($fp['content'], $stuFullName) !== false) {
+            $isHit = true;
+        } elseif (!empty($stuLastName) && !empty($stuFirstName) && stripos($fp['content'], $stuLastName . ', ' . $stuFirstName) !== false) {
+            $isHit = true;
+        }
+        if ($isHit && !isset($officeFeedMentions[$fOff])) {
+            $officeFeedMentions[$fOff] = [
+                'post_id' => intval($fp['id']),
+                'title'   => $fp['title']
+            ];
+        }
+    }
+}
+
+$officeDetailData = [];
+foreach ($offices as $ofName) {
+    $st = $officeStatuses[$ofName] ?? 'Pending';
+    $nt = trim($officeNotes[$ofName] ?? '');
+    $reasons = [];
+    $mentionPostId = 0;
+
+    if ($st === 'Approved') {
+        $reasons[] = "Your clearance for $ofName has been approved.";
+    } elseif ($st === 'Declined') {
+        $reasons[] = !empty($nt) ? $nt : "Declined by $ofName.";
+    } else {
+        if (!empty($officeFeedMentions[$ofName])) {
+            $mentionPostId = $officeFeedMentions[$ofName]['post_id'];
+            $reasons[] = "Mentioned in Feed post: \"" . $officeFeedMentions[$ofName]['title'] . "\"";
+        }
+        if (strcasecmp($ofName, 'Dean') === 0 && ($officeStatuses['OSA'] ?? 'Pending') !== 'Approved') {
+            $reasons[] = "Locked: Waiting for OSA approval first before Dean can clear you.";
+        }
+        if (strcasecmp($ofName, 'Registrar') === 0) {
+            $notCleared = [];
+            foreach ($offices as $otherOf) {
+                if (strcasecmp($otherOf, 'Registrar') !== 0 && ($officeStatuses[$otherOf] ?? 'Pending') !== 'Approved') {
+                    $notCleared[] = $otherOf;
+                }
+            }
+            if (!empty($notCleared)) {
+                $reasons[] = "Locked: Waiting for completion of " . implode(', ', $notCleared) . ".";
+            }
+        }
+        if (!empty($nt)) {
+            $reasons[] = $nt;
+        }
+        if (empty($reasons)) {
+            $reasons[] = "Awaiting review and approval from $ofName.";
+        }
+    }
+
+    $officeDetailData[$ofName] = [
+        'office' => $ofName,
+        'status' => $st,
+        'reasons' => $reasons,
+        'mention_post_id' => $mentionPostId
+    ];
 }
 
 $allApproved = ($approvedCount == $totalOffices && $totalOffices > 0);
@@ -652,14 +731,11 @@ body.dark-mode .cert-signature-line {
                     $status = $officeStatuses[$office];
                     $statusClass = strtolower($status);
                     $note = $officeNotes[$office];
-
-                    $office_link = $allApproved
-                        ? "?view=office&show_certificate=1"
-                        : "javascript:void(0);";
                 ?>
                 <div class="office-box <?php echo $statusClass; ?>" 
-                     onclick="window.location.href='<?php echo $office_link; ?>'"
-                     style="cursor: <?php echo $allApproved ? 'pointer' : 'default'; ?>;">
+                     onclick="openOfficeReasonModal('<?php echo htmlspecialchars(addslashes($office)); ?>')"
+                     style="cursor: pointer;"
+                     title="Tap to view status & reason">
                     <div class="office-box-name"><?php echo htmlspecialchars($office); ?></div>
                     <div class="office-box-status"><?php echo $status; ?></div>
                     <?php if ($status == 'Declined' && !empty($note)): ?>
@@ -672,7 +748,84 @@ body.dark-mode .cert-signature-line {
     </div>
 </div>
 
+<!-- Same-Screen Office Reason Popup Modal -->
+<div id="officeReasonModal" onclick="if(event.target===this) closeOfficeReasonModal()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; padding:16px;">
+    <div style="background:#fff; width:100%; max-width:440px; border-radius:10px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,0.25); font-family:'Times New Roman', Times, serif;">
+        <div id="ormHeader" style="background:#1b4d3e; color:#fff; padding:14px 18px; display:flex; align-items:center; justify-content:space-between;">
+            <span id="ormTitle" style="font-size:16px; font-weight:bold;">Office Details</span>
+            <button type="button" onclick="closeOfficeReasonModal()" style="background:none; border:none; color:#fff; font-size:20px; cursor:pointer; line-height:1;">&times;</button>
+        </div>
+        <div style="padding:18px;">
+            <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+                <span style="font-size:13px; color:#555;"><strong>Status:</strong></span>
+                <span id="ormStatusBadge" style="padding:3px 10px; border-radius:12px; font-size:12px; font-weight:bold;"></span>
+            </div>
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px; margin-bottom:14px;">
+                <div style="font-size:12px; font-weight:bold; color:#334155; margin-bottom:6px;" id="ormReasonHeading">Reason / Details:</div>
+                <ul id="ormReasonList" style="margin:0; padding-left:18px; font-size:13px; color:#1f2937; line-height:1.5;"></ul>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
+                <a id="ormFeedLink" href="#" style="display:none; padding:7px 14px; background:#d35400; color:#fff; text-decoration:none; border-radius:5px; font-size:12px; font-weight:bold;">
+                    <i class="fas fa-bullhorn"></i> View in Feed
+                </a>
+                <?php if ($allApproved): ?>
+                <a href="?view=office&show_certificate=1" style="padding:7px 14px; background:#1b4d3e; color:#fff; text-decoration:none; border-radius:5px; font-size:12px; font-weight:bold;">
+                    <i class="fas fa-certificate"></i> View Certificate
+                </a>
+                <?php endif; ?>
+                <button type="button" onclick="closeOfficeReasonModal()" style="padding:7px 14px; background:#64748b; color:#fff; border:none; border-radius:5px; font-size:12px; cursor:pointer;">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+var officeDetailData = <?php echo json_encode($officeDetailData, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+
+function openOfficeReasonModal(officeName) {
+    var data = officeDetailData[officeName];
+    if (!data) return;
+
+    document.getElementById('ormTitle').textContent = data.office;
+    var badge = document.getElementById('ormStatusBadge');
+    badge.textContent = data.status;
+
+    if (data.status === 'Approved') {
+        badge.style.background = '#d4efdf';
+        badge.style.color = '#1e8449';
+        document.getElementById('ormReasonHeading').textContent = 'Clearance Status:';
+    } else if (data.status === 'Declined') {
+        badge.style.background = '#fadbd8';
+        badge.style.color = '#c0392b';
+        document.getElementById('ormReasonHeading').textContent = 'Reason for Declination:';
+    } else {
+        badge.style.background = '#fdebd0';
+        badge.style.color = '#b9770e';
+        document.getElementById('ormReasonHeading').textContent = 'Why Pending:';
+    }
+
+    var list = document.getElementById('ormReasonList');
+    list.innerHTML = '';
+    (data.reasons || []).forEach(function(r) {
+        var li = document.createElement('li');
+        li.textContent = r;
+        list.appendChild(li);
+    });
+
+    var feedLink = document.getElementById('ormFeedLink');
+    if (data.mention_post_id && data.mention_post_id > 0 && data.status !== 'Approved') {
+        feedLink.href = '<?php echo $_SERVER['PHP_SELF']; ?>?view=feed#post-' + data.mention_post_id;
+        feedLink.style.display = 'inline-block';
+    } else {
+        feedLink.style.display = 'none';
+    }
+
+    document.getElementById('officeReasonModal').style.display = 'flex';
+}
+
+function closeOfficeReasonModal() {
+    document.getElementById('officeReasonModal').style.display = 'none';
+}
 // ============================================
 // DOWNLOAD CERTIFICATE AS PDF
 // ============================================

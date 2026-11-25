@@ -843,7 +843,7 @@ if (isset($_GET['google_login']) && (isset($_SESSION['admin']) || isset($_SESSIO
     exit;
 }
 
-if (isset($_GET['google_callback']) || isset($_GET['code'])) {
+if (isset($_GET['google_callback']) || isset($_GET['code']) || isset($_GET['error'])) {
     require_once 'includes/google_oauth.php';
     
     $userInfo = handleGoogleCallback($conn);
@@ -862,6 +862,7 @@ if (isset($_GET['google_callback']) || isset($_GET['code'])) {
         elseif (isset($_SESSION['student'])) {
             $student_id = $_SESSION['student'];
             $conn->query("UPDATE chmsu_user_accounts SET email='$email' WHERE chmsu_student_id='$student_id'");
+            $conn->query("UPDATE chmsu_students_master SET email='$email' WHERE chmsu_student_id='$student_id'");
             logActivity($conn, $student_id, 'student', "Connected Gmail: $email");
             $success = "✅ Gmail connected successfully!";
             header("Location: " . $_SERVER['PHP_SELF'] . "?view=home&gmail_connected=1");
@@ -1976,7 +1977,7 @@ elseif ((isset($_SESSION['office']) && strcasecmp($_SESSION['office'], 'Registra
         include 'modules/registrar/masterlist.php';
     } 
     elseif ($currentSection == 'clearance') {
-        include 'modules/registrar/clearance.php';
+        include 'modules/registrar/clearance_status.php';
     } 
     elseif ($currentSection == 'clearance_status') {
         include 'modules/registrar/clearance_status.php';

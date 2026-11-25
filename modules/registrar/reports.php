@@ -30,6 +30,18 @@ $filter_status  = isset($_GET['filter_status'])  ? trim($_GET['filter_status']) 
 
 $totalOffices = $conn->query("SELECT COUNT(*) as c FROM chmsu_offices")->fetch_assoc()['c'];
 
+// Same rule as the student's clearance page: only the CURRENT semester,
+// and only offices that exist in chmsu_offices.
+$rep_sem_id = 0;
+$rep_sem_q = $conn->query("SELECT id FROM chmsu_semesters WHERE is_current = 1 LIMIT 1");
+if ($rep_sem_q && $rep_sem_row = $rep_sem_q->fetch_assoc()) $rep_sem_id = intval($rep_sem_row['id']);
+
+$rep_has_sem_col = false;
+$rep_chk = $conn->query("SHOW COLUMNS FROM chmsu_clearance_status LIKE 'semester_id'");
+if ($rep_chk && $rep_chk->num_rows > 0) $rep_has_sem_col = true;
+
+$rep_sem_cond = ($rep_has_sem_col && $rep_sem_id > 0) ? " AND cs.semester_id = $rep_sem_id" : "";
+
 $where = array();
 $where[] = "m.is_archived = 0";
 
@@ -50,7 +62,11 @@ $query = "SELECT
             CONCAT(m.chmsu_last_name, ', ', m.chmsu_first_name, ' ', m.chmsu_middle_name) as student_name,
             m.chmsu_last_name, m.chmsu_first_name, m.chmsu_year as year,
             m.chmsu_section as section, m.chmsu_course as course, m.is_irregular,
-            (SELECT COUNT(DISTINCT cs.office_name) FROM chmsu_clearance_status cs WHERE cs.student_id = m.chmsu_student_id AND cs.status = 'clear') as offices_completed
+            (SELECT COUNT(DISTINCT cs.office_name)
+               FROM chmsu_clearance_status cs
+               INNER JOIN chmsu_offices o ON o.office_name = cs.office_name
+              WHERE cs.student_id = m.chmsu_student_id
+                AND cs.status = 'clear' $rep_sem_cond) as offices_completed
           FROM chmsu_students_master m
           $where_sql
           ORDER BY m.chmsu_course ASC, CAST(m.chmsu_year AS UNSIGNED) ASC, m.chmsu_section ASC, m.chmsu_last_name ASC, m.chmsu_first_name ASC";
@@ -226,7 +242,6 @@ $tdCls   = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-[#333]';
     <ul class="sidebar-menu">
         <li><a href="?section=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
         <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
-        <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
         <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
         <li><a href="?section=history"><i class="fas fa-history"></i> Clearance History</a></li>
         <li><a href="?section=reports" class="active"><i class="fas fa-chart-bar"></i> Reports</a></li>
@@ -341,6 +356,9 @@ $tdCls   = 'px-3 py-1.5 text-sm border border-gray-300 dark:border-[#333]';
                 </form>
             </div>
         </div>
+
+        <!-- PDF Report Settings Customizer -->
+        <?php include __DIR__ . '/../../includes/pdf_customizer.php'; ?>
 
         <!-- Export buttons -->
         <div class="flex flex-wrap gap-2 mb-3 justify-end">

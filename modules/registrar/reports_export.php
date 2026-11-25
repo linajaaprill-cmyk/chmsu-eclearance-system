@@ -194,10 +194,87 @@ if ($type === 'excel') {
         . $cssBase
         . ' table.data{mso-table-lspace:0pt;mso-table-rspace:0pt;} table.data th{mso-line-height-rule:exactly;} table.data td{mso-line-height-rule:exactly;}';
 } else if ($type === 'pdf') {
-    $isPdf = true;
-    $headXml = '';
-    $css = $cssBase;
-    ob_start();
+    require_once __DIR__ . '/../../includes/pdf_renderer.php';
+    $cfg = chmsu_pdf_get_settings();
+
+    $colHeaders = '<tr>'
+        . '<th style="width:5%;text-align:center;">#</th>'
+        . '<th style="width:13%;text-align:left;">Student ID</th>'
+        . '<th style="width:28%;text-align:left;">Student Name</th>'
+        . '<th style="width:10%;text-align:left;">Program</th>'
+        . '<th style="width:8%;text-align:center;">Year</th>'
+        . '<th style="width:8%;text-align:center;">Section</th>'
+        . '<th style="width:9%;text-align:center;">Type</th>'
+        . '<th style="width:10%;text-align:center;">Status</th>'
+        . '<th style="width:9%;text-align:center;">Progress</th>'
+        . '</tr>';
+
+    $pdfBody = '<div class="section-banner">Office: Registrar Office — Student Clearance Records</div>';
+
+    if (empty($students)) {
+        $pdfBody .= '<table class="data"><thead>' . $colHeaders . '</thead><tbody>';
+        $pdfBody .= '<tr><td colspan="9" style="text-align:center;padding:12px;">No records found.</td></tr>';
+        $pdfBody .= '</tbody></table>';
+    } else {
+        $num = 1;
+        $lastGroup = '';
+        $tableOpen = false;
+        foreach ($students as $row) {
+            $groupKey = $row['course'] . '|' . $row['year_raw'] . '|' . $row['section'];
+            if ($groupKey !== $lastGroup) {
+                if ($tableOpen) {
+                    $pdfBody .= '</tbody></table><div class="spacer"></div>';
+                }
+                $yearSuffix = 'th';
+                if ($row['year_raw'] == 1) $yearSuffix = 'st';
+                elseif ($row['year_raw'] == 2) $yearSuffix = 'nd';
+                elseif ($row['year_raw'] == 3) $yearSuffix = 'rd';
+
+                $groupTitle = strtoupper($row['course']) . ' — ' . $row['year_raw'] . $yearSuffix . ' Year — Section ' . strtoupper($row['section']);
+                $pdfBody .= '<div class="group-label">' . htmlspecialchars($groupTitle) . '</div>';
+                $pdfBody .= '<table class="data"><thead>' . $colHeaders . '</thead><tbody>';
+                $tableOpen = true;
+                $lastGroup = $groupKey;
+                $num = 1;
+            }
+
+            $pdfBody .= '<tr>';
+            $pdfBody .= '<td style="width:5%;text-align:center;">' . $num++ . '</td>';
+            $pdfBody .= '<td style="width:13%;text-align:left;">' . htmlspecialchars($row['id']) . '</td>';
+            $pdfBody .= '<td style="width:28%;text-align:left;">' . htmlspecialchars($row['name']) . '</td>';
+            $pdfBody .= '<td style="width:10%;text-align:left;">' . htmlspecialchars($row['course']) . '</td>';
+            $pdfBody .= '<td style="width:8%;text-align:center;">' . htmlspecialchars($row['year']) . '</td>';
+            $pdfBody .= '<td style="width:8%;text-align:center;">' . htmlspecialchars($row['section']) . '</td>';
+            $pdfBody .= '<td style="width:9%;text-align:center;">' . htmlspecialchars($row['type']) . '</td>';
+            $pdfBody .= '<td style="width:10%;text-align:center;">' . htmlspecialchars($row['status']) . '</td>';
+            $pdfBody .= '<td style="width:9%;text-align:center;">' . htmlspecialchars($row['progress']) . '</td>';
+            $pdfBody .= '</tr>';
+        }
+        if ($tableOpen) {
+            $pdfBody .= '</tbody></table><div class="spacer"></div>';
+        }
+    }
+
+    $pdfBody .= '<div class="section-banner">SUMMARY STATISTICS</div>';
+    $pdfBody .= '<table class="summary">'
+        . '<tr><th style="width:70%;">Metric</th><th style="width:30%;text-align:right;">Value</th></tr>'
+        . '<tr><td style="width:70%;">Total Students</td><td style="width:30%;text-align:right;">' . $totalStudents . '</td></tr>'
+        . '<tr><td style="width:70%;">Approved (Completed Clearance)</td><td style="width:30%;text-align:right;">' . $totalApproved . '</td></tr>'
+        . '<tr><td style="width:70%;">Pending (In Progress)</td><td style="width:30%;text-align:right;">' . $totalPending . '</td></tr>'
+        . '<tr><td style="width:70%;">Regular Students</td><td style="width:30%;text-align:right;">' . $totalRegular . '</td></tr>'
+        . '<tr><td style="width:70%;">Irregular Students</td><td style="width:30%;text-align:right;">' . $totalIrregular . '</td></tr>'
+        . '<tr><td style="width:70%;">Clearance Completion Rate</td><td style="width:30%;text-align:right;">' . $completionRate . '%</td></tr>'
+        . '</table>';
+
+    chmsu_pdf_render(
+        $pdfBody,
+        'Clearance Completion Report',
+        $filterSummaryText,
+        'Registrar Office',
+        'Clearance_Report_' . date('Ymd') . '.pdf',
+        $cfg
+    );
+    exit;
 } else {
     exit('Invalid export type');
 }

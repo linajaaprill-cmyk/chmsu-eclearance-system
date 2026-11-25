@@ -15,6 +15,82 @@ $admin = $_SESSION['admin'];
 $adminSection = 'activity';
 $error = '';
 $success = '';
+
+// ============================================
+// PDF EXPORT (self-contained in this file)
+// ============================================
+if (isset($_GET['export_activity']) && $_GET['export_activity'] === 'pdf') {
+    @set_time_limit(300);
+    @ini_set('memory_limit', '512M');
+
+    $tcpdf_paths = [
+        __DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php',
+        'C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php'
+    ];
+    foreach ($tcpdf_paths as $tcpdf_path) {
+        if (file_exists($tcpdf_path)) { require_once $tcpdf_path; break; }
+    }
+
+    while (ob_get_level()) { ob_end_clean(); }
+
+    if (!class_exists('TCPDF')) {
+        header('Content-Type: text/plain');
+        echo 'PDF library (TCPDF) not found in the vendor folder.';
+        exit;
+    }
+
+    $pdf_rows = [];
+    $pdf_res = $conn->query("SELECT user_id, user_type, action, ip_address, created_at FROM chmsu_activity_log ORDER BY created_at DESC");
+    if ($pdf_res) { while ($pr = $pdf_res->fetch_assoc()) { $pdf_rows[] = $pr; } }
+
+    $pdf = new TCPDF('L', 'mm', 'A4', true, 'UTF-8', false);
+    $pdf->SetCreator('CHMSU E-Clearance System');
+    $pdf->SetAuthor('CHMSU');
+    $pdf->SetTitle('System Activity Log');
+    $pdf->setPrintHeader(false);
+    $pdf->setPrintFooter(false);
+    $pdf->SetMargins(12, 12, 12);
+    $pdf->SetAutoPageBreak(true, 12);
+    $pdf->SetFont('helvetica', '', 8);
+    $pdf->AddPage();
+
+    $head = '<div style="text-align:center;">'
+          . '<div style="font-size:15pt;font-weight:bold;">CARLOS HILADO MEMORIAL STATE UNIVERSITY</div>'
+          . '<div style="font-size:9pt;">Talisay City, Negros Occidental, Philippines</div>'
+          . '<div style="font-size:12pt;font-weight:bold;">SYSTEM ACTIVITY LOG</div></div><br>'
+          . '<table cellpadding="2" style="font-size:8pt;"><tr>'
+          . '<td><b>Date Generated:</b> ' . date('F d, Y h:i A') . '</td>'
+          . '<td style="text-align:right;"><b>Total Records:</b> ' . count($pdf_rows) . '</td></tr></table><br>';
+    $pdf->writeHTML($head, true, false, true, false, '');
+
+    $th = '<tr style="background-color:#dfe8e4;font-weight:bold;">'
+        . '<th width="18%">User</th><th width="10%">Type</th><th width="40%">Action</th>'
+        . '<th width="12%">IP Address</th><th width="20%">Date/Time</th></tr>';
+
+    if (empty($pdf_rows)) {
+        $pdf->writeHTML('<table border="1" cellpadding="5"><tr><td style="text-align:center;">No activity records found.</td></tr></table>', true, false, true, false, '');
+    } else {
+        foreach (array_chunk($pdf_rows, 150) as $chunk) {
+            $t = '<table border="1" cellpadding="3"><thead>' . $th . '</thead><tbody>';
+            foreach ($chunk as $r) {
+                $t .= '<tr>'
+                    . '<td width="18%">' . htmlspecialchars((string)$r['user_id']) . '</td>'
+                    . '<td width="10%">' . htmlspecialchars((string)$r['user_type']) . '</td>'
+                    . '<td width="40%">' . htmlspecialchars((string)$r['action']) . '</td>'
+                    . '<td width="12%">' . htmlspecialchars((string)$r['ip_address']) . '</td>'
+                    . '<td width="20%">' . date('M d, Y H:i:s', strtotime($r['created_at'])) . '</td>'
+                    . '</tr>';
+            }
+            $t .= '</tbody></table>';
+            $pdf->writeHTML($t, true, false, true, false, '');
+        }
+    }
+
+    $pdf->Ln(3);
+    $pdf->writeHTML('<div style="text-align:center;font-size:7pt;font-style:italic;">This is a system-generated report. No signature is required.</div>', true, false, true, false, '');
+    $pdf->Output('Activity_Log_' . date('Ymd') . '.pdf', 'D');
+    exit;
+}
 ?>
 
 <!DOCTYPE html>
@@ -24,6 +100,8 @@ $success = '';
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CHMSU E-Clearance System - Activity Log</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Times New Roman', Times, serif; background: #f5f5f5; font-size: 14px; }
@@ -151,6 +229,13 @@ $success = '';
             border: none;
             cursor: pointer;
         }
+        .btn-pdf {
+            background: #e74c3c;
+            color: white;
+            padding: 6px 12px;
+            border: none;
+            cursor: pointer;
+        }
         .btn-word {
             background: #1b4d3e;
             color: white;
@@ -266,8 +351,9 @@ $success = '';
                 <input type="text" class="search-box" id="activitySearch" placeholder="Search by user or action..." onkeyup="searchActivity()">
                 
                 <div class="export-buttons">
-                    <button class="btn-excel" onclick="exportActivity('excel')">Export Excel</button>
-                    <button class="btn-word" onclick="exportActivity('word')">Export Word</button>
+                    <a href="modules/admin/export_activity_pdf.php" id="exportPdfBtn" class="btn-pdf" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                        <i class="fas fa-file-pdf"></i> Export PDF
+                    </a>
                 </div>
                 
                 <div class="table-responsive">
@@ -348,9 +434,24 @@ $success = '';
         });
     }
     
+    // Export Activity PDF via server-side TCPDF generator
     function exportActivity(type) {
-        window.location.href = '?export_activity=' + type;
+        const search = document.getElementById('activitySearch')?.value.trim() || '';
+        let url = 'modules/admin/export_activity_pdf.php';
+        if (search) {
+            url += '?search=' + encodeURIComponent(search);
+        }
+        window.location.href = url;
     }
+
+    // Keep the Export PDF link in sync with the search bar
+    document.getElementById('activitySearch')?.addEventListener('input', function() {
+        const btn = document.getElementById('exportPdfBtn');
+        if (btn) {
+            const val = this.value.trim();
+            btn.href = 'modules/admin/export_activity_pdf.php' + (val ? '?search=' + encodeURIComponent(val) : '');
+        }
+    });
 </script>
 
 </body>

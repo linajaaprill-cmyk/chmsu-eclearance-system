@@ -883,7 +883,22 @@ function handleGoogleCallback($conn) {
 
     $accessToken = $tokenData['access_token'];
 
-    // Step 2: Fetch user info using access token
+    // Step 2: Extract user info from ID Token (instant & verified) or fetch from userinfo endpoint
+    if (!empty($tokenData['id_token'])) {
+        $jwtParts = explode('.', $tokenData['id_token']);
+        if (isset($jwtParts[1])) {
+            $payload = json_decode(base64_decode(str_replace(['-', '_'], ['+', '/'], $jwtParts[1])), true);
+            if (!empty($payload['email'])) {
+                return [
+                    'email'   => trim($payload['email']),
+                    'name'    => $payload['name'] ?? null,
+                    'picture' => $payload['picture'] ?? null,
+                    'id'      => $payload['sub'] ?? ($payload['id'] ?? null)
+                ];
+            }
+        }
+    }
+
     $userInfoEndpoint = 'https://www.googleapis.com/oauth2/v3/userinfo';
     $userResponse = chmsu_http_request($userInfoEndpoint, 'GET', null, [
         'Authorization: Bearer ' . $accessToken,

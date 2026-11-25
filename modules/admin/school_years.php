@@ -1372,7 +1372,7 @@ if(isset($_POST['action'])) {
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
-                    window.location.reload();
+                    window.location.href = window.location.pathname + window.location.search;
                 } else {
                     alert(data.message || 'Failed to apply change.');
                     btn.disabled = false;
@@ -1680,7 +1680,7 @@ if(isset($_POST['action'])) {
                     box.style.background = '#d4edda';
                 });
                 if (otpTimerInterval) { clearInterval(otpTimerInterval); otpTimerInterval = null; }
-                setTimeout(() => window.location.reload(), 1400);
+                setTimeout(() => window.location.href = window.location.pathname + window.location.search, 1400);
             } else {
                 statusDiv.className = 'otp-status error';
                 statusDiv.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;

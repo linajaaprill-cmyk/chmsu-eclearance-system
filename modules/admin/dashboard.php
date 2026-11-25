@@ -54,7 +54,7 @@ $admin_info = ['email' => ''];
 $r = $conn->query("SELECT email, app_password FROM chmsu_admin_users WHERE username='" . $conn->real_escape_string($admin) . "' LIMIT 1");
 if ($r && $row = $r->fetch_assoc()) {
     $admin_info = $row;
-    if (!empty($row['email']) && !empty($row['app_password'])) $has_email = true;
+    if (!empty($row['email'])) $has_email = true;
 }
 
 // Data for charts: clearance decisions per office (current semester)
@@ -714,7 +714,7 @@ if ($r) while ($row = $r->fetch_assoc()) $studentsByYear[] = $row;
                         </div>
                         <div class="email-actions">
                             <button onclick="openEmailModal()" class="btn-email-change">
-                                <i class="fas fa-edit"></i> Change
+                                <i class="fas fa-sync-alt"></i> Switch Gmail
                             </button>
                         </div>
                     </div>

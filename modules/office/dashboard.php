@@ -66,6 +66,11 @@ $recentActivities = $conn->query("SELECT * FROM chmsu_activity_log WHERE user_ty
 if (isset($_GET['gmail_connected'])) {
     $success = "Gmail connected successfully!";
 }
+// Gmail switch flash message (set after Google sign-in)
+if (!empty($_SESSION['gmail_flash'])) {
+    $success = htmlspecialchars($_SESSION['gmail_flash']);
+    unset($_SESSION['gmail_flash']);
+}
 if (isset($_GET['google_error'])) {
     if ($_GET['google_error'] === 'not_configured') {
         $error = "Google Sign-In is not configured yet. Please configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env";
@@ -404,7 +409,7 @@ if ($currentSemId > 0) {
                             </div>
                         </div>
                         <button onclick="openEmailModal()" class="mt-3 sm:mt-0 px-4 py-2 bg-chmsu hover:bg-chmsuLight text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-sm">
-                            <i data-lucide="pencil" class="w-4 h-4"></i> Change
+                            <i data-lucide="repeat" class="w-4 h-4"></i> Switch Gmail
                         </button>
                     </div>
                 <?php else: ?>

@@ -247,7 +247,13 @@ if ($selectedSem) {
             <div class="semester-card-header">
                 <div class="semester-title">
                     <i class="fas fa-building"></i>
-                    Office Performance — <?php echo htmlspecialchars($selectedSem['semester_name']); ?>
+                    <?php
+                    $selSchoolYear = '';
+                    foreach ($semesterSummaries as $ss) {
+                        if (intval($ss['id']) === intval($selectedSem['id'])) { $selSchoolYear = $ss['school_year'] ?? ''; break; }
+                    }
+                    ?>
+                    Office Performance — <?php echo htmlspecialchars($selectedSem['semester_name']); ?><?php if (!empty($selSchoolYear)): ?> · <?php echo htmlspecialchars($selSchoolYear); ?><?php endif; ?>
                 </div>
             </div>
             <div class="semester-card-body">

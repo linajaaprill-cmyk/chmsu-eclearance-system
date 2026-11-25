@@ -1271,7 +1271,7 @@ if(isset($_POST['action'])) {
                 }
                 
                 setTimeout(function() {
-                    window.location.reload();
+                    window.location.href = window.location.pathname + window.location.search;
                 }, 1200);
             } else {
                 statusDiv.className = 'otp-status error';

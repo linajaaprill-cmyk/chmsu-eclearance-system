@@ -66,6 +66,9 @@ $archivedSemesters = $semesters;
 
 // Build semester summaries for all semesters
 $totalOffices = getTotalOfficesCount($conn);
+$allOfficeNames = [];
+$officeNamesQ = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY office_name");
+if ($officeNamesQ) { while ($on = $officeNamesQ->fetch_assoc()) { $allOfficeNames[] = $on['office_name']; } }
 $semesterSummaries = [];
 foreach ($archivedSemesters as $sem) {
     $sid = intval($sem['id']);
@@ -76,9 +79,18 @@ foreach ($archivedSemesters as $sem) {
     $partiallyCleared = 0;
     $none = 0;
 
+    // Approved offices per student for this semester (only offices that exist, like the student page)
+    $approvedPerStudent = [];
+    $apQ = $conn->query("SELECT cs.student_id, COUNT(DISTINCT LOWER(TRIM(cs.office_name))) AS c
+                         FROM chmsu_clearance_status cs
+                         INNER JOIN chmsu_offices o ON LOWER(TRIM(o.office_name)) = LOWER(TRIM(cs.office_name))
+                         WHERE cs.semester_id = $sid AND LOWER(TRIM(cs.status)) = 'clear'
+                         GROUP BY cs.student_id");
+    if ($apQ) { while ($ap = $apQ->fetch_assoc()) { $approvedPerStudent[trim((string)$ap['student_id'])] = intval($ap['c']); } }
+
     $studentsQ = $conn->query("SELECT chmsu_student_id FROM chmsu_students_master WHERE is_archived = 0");
     while ($s = $studentsQ->fetch_assoc()) {
-        $cleared = countStudentClearedOffices($conn, $s['chmsu_student_id'], $sid);
+        $cleared = $approvedPerStudent[trim((string)$s['chmsu_student_id'])] ?? 0;
         if ($cleared >= $totalOffices && $totalOffices > 0) $fullyCleared++;
         elseif ($cleared > 0) $partiallyCleared++;
         else $none++;
@@ -90,6 +102,8 @@ foreach ($archivedSemesters as $sem) {
     $sem['none'] = $none;
     $sem['rate'] = $totalStudents > 0 ? round(($fullyCleared / $totalStudents) * 100, 1) : 0;
     $sem['feed_count'] = count(getAllFeedPostsForSemester($conn, $sid));
+    $regCntQ = $conn->query("SELECT COUNT(*) AS c FROM chmsu_clearance_status WHERE LOWER(TRIM(office_name)) = 'registrar' AND semester_id = $sid AND LOWER(TRIM(status)) IN ('clear','unclear')");
+    $sem['reg_actions'] = $regCntQ ? intval($regCntQ->fetch_assoc()['c']) : 0;
     $semesterSummaries[] = $sem;
 }
 
@@ -244,6 +258,13 @@ foreach ($groupedBySY as $syKey => $list) {
         .btn-primary:hover { background: #2d6a4f; }
         .btn-feed { background: #3498db; color: white; }
         .btn-feed:hover { background: #2980b9; }
+        .btn-myrec { background: #8e44ad; color: white; }
+        .btn-myrec:hover { background: #732d91; }
+        .btn-myrec .count-badge {
+            background: rgba(255,255,255,0.3);
+            padding: 1px 7px; border-radius: 10px;
+            font-size: 10px; font-weight: 700;
+        }
         .btn-sm { padding: 6px 12px; font-size: 11px; }
 
         .btn-feed .count-badge {
@@ -581,7 +602,58 @@ foreach ($groupedBySY as $syKey => $list) {
             width: 100%;
             border-collapse: collapse;
             font-size: 13px;
+            table-layout: fixed;
         }
+        .roster-simple-table thead th,
+        .roster-simple-table tbody td { vertical-align: middle; }
+        .roster-simple-table thead th:nth-child(3),
+        .roster-simple-table thead th:nth-child(4),
+        .roster-simple-table td.progress-cell,
+        .roster-simple-table td.status-cell { text-align: center; }
+        .roster-simple-table td { overflow: hidden; text-overflow: ellipsis; }
+
+        .progress-btn {
+            background: #eef7f2; color: #1b4d3e;
+            border: 1px solid #cfe5da; border-radius: 14px;
+            padding: 3px 12px; font-size: 12px; font-weight: 700;
+            cursor: pointer; font-family: inherit;
+            display: inline-flex; align-items: center; gap: 6px;
+            transition: background 0.2s;
+        }
+        .progress-btn:hover { background: #d9eee4; }
+        .progress-btn i { font-size: 9px; transition: transform 0.2s; }
+        .progress-btn.open i { transform: rotate(180deg); }
+        .roster-simple-table tbody tr.progress-detail-row:hover { background: transparent; }
+        .roster-simple-table tbody tr.progress-detail-row td {
+            background: #f8fbf9; padding: 12px 14px;
+            border-bottom: 1px solid #e3efe9; text-align: left;
+        }
+        .office-chip-wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+        .office-chip {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 12px; border-radius: 14px;
+            font-size: 11.5px; font-weight: 600; border: 1px solid transparent;
+        }
+        .office-chip .office-chip-name { font-weight: 700; }
+        .office-chip .office-chip-state { font-weight: 500; opacity: 0.85; }
+        .office-chip.approved { background: #d4efdf; color: #1e8449; border-color: #b5e0c5; }
+        .office-chip.declined { background: #fdecea; color: #c0392b; border-color: #f5c6c0; }
+        .office-chip.pending  { background: #f0f0f0; color: #666; border-color: #e0e0e0; }
+
+        /* Registrar own records table */
+        .myrec-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+        .myrec-table thead th {
+            background: #f8f9fa; padding: 10px 14px; text-align: left;
+            font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+            color: #555; font-weight: 700; border-bottom: 1px solid #ddd; vertical-align: middle;
+        }
+        .myrec-table tbody td { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; color: #333; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
+        .myrec-table tbody tr:last-child td { border-bottom: none; }
+        .myrec-table tbody tr:hover { background: #fafbfc; }
+        .myrec-table th.c, .myrec-table td.c { text-align: center; }
+        .myrec-table code { background: #f0f4f3; padding: 2px 8px; border-radius: 3px; font-size: 11px; color: #1b4d3e; }
+        .myrec-name { color: #1b4d3e; font-weight: 600; }
+        .myrec-note { white-space: normal; word-break: break-word; color: #555; font-size: 12px; }
         .roster-simple-table thead th {
             background: #f8f9fa;
             padding: 10px 14px;
@@ -655,6 +727,17 @@ foreach ($groupedBySY as $syKey => $list) {
         body.dark-mode .roster-simple-table tbody tr:hover { background: #242526; }
         body.dark-mode .roster-simple-table .id-cell code { background: #2c2c2c; color: #f1c40f; }
         body.dark-mode .roster-simple-table .name-cell { color: #f1c40f; }
+        body.dark-mode .progress-btn { background: #2c2c2c; color: #f1c40f; border-color: #444; }
+        body.dark-mode .roster-simple-table tbody tr.progress-detail-row td { background: #202122; border-color: #333; }
+        body.dark-mode .office-chip.approved { background: #1b3a2a; color: #8fdfb0; border-color: #2d5a43; }
+        body.dark-mode .office-chip.declined { background: #3a1f1e; color: #f5a8a1; border-color: #5a2d2a; }
+        body.dark-mode .office-chip.pending  { background: #2c2c2c; color: #aaa; border-color: #444; }
+        body.dark-mode .myrec-table thead th { background: #2c2c2c; color: #aaa; border-color: #333; }
+        body.dark-mode .myrec-table tbody td { color: #ddd; border-color: #333; }
+        body.dark-mode .myrec-table tbody tr:hover { background: #242526; }
+        body.dark-mode .myrec-table code { background: #2c2c2c; color: #f1c40f; }
+        body.dark-mode .myrec-name { color: #f1c40f; }
+        body.dark-mode .myrec-note { color: #bbb; }
 
         @media (max-width: 768px) {
             .registrar-sidebar { width: 100%; position: relative; height: auto; }
@@ -687,7 +770,6 @@ foreach ($groupedBySY as $syKey => $list) {
         <ul class="sidebar-menu">
             <li><a href="?section=dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
-            <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
             <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
             <li><a href="?section=history" class="active"><i class="fas fa-history"></i> Clearance History</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>
@@ -709,7 +791,7 @@ foreach ($groupedBySY as $syKey => $list) {
 
     <div class="main-content">
 
-        <?php if ($view_mode === 'feed' && $selectedSem && intval($selectedSem['is_current']) !== 1): ?>
+        <?php if ($view_mode === 'feed' && $selectedSem): ?>
             <!-- ============================================ -->
             <!-- FEED ARCHIVE — FULL SEPARATE SCREEN           -->
             <!-- ============================================ -->
@@ -922,7 +1004,132 @@ foreach ($groupedBySY as $syKey => $list) {
                 </div>
             <?php endif; ?>
 
-        <?php elseif ($view_mode === 'list' && $selectedSem && intval($selectedSem['is_current']) !== 1): ?>
+        <?php elseif ($view_mode === 'myrecords' && $selectedSem): ?>
+            <!-- ============================================ -->
+            <!-- REGISTRAR'S OWN RECORD OF CLEARANCE ACTIONS   -->
+            <!-- ============================================ -->
+            <?php
+            $myRecSid = intval($selectedSem['id']);
+            $myRecRows = [];
+            $myRecQ = $conn->query("
+                SELECT cs.student_id, cs.status, cs.note, cs.updated_at,
+                       m.chmsu_last_name, m.chmsu_first_name,
+                       m.chmsu_course, m.chmsu_year, m.chmsu_section
+                FROM chmsu_clearance_status cs
+                LEFT JOIN chmsu_students_master m ON m.chmsu_student_id = cs.student_id
+                WHERE LOWER(TRIM(cs.office_name)) = 'registrar'
+                  AND cs.semester_id = $myRecSid
+                  AND LOWER(TRIM(cs.status)) IN ('clear','unclear')
+                ORDER BY cs.updated_at DESC
+            ");
+            $myRecApproved = 0;
+            $myRecDeclined = 0;
+            if ($myRecQ) {
+                while ($mr = $myRecQ->fetch_assoc()) {
+                    if (strtolower(trim($mr['status'])) === 'clear') $myRecApproved++; else $myRecDeclined++;
+                    $myRecRows[] = $mr;
+                }
+            }
+            ?>
+
+            <div class="dashboard-header-bar">
+                <h2><i class="fas fa-user-check"></i> My Actions — Registrar Record</h2>
+                <a href="?section=history" class="back-btn">
+                    <i class="fas fa-arrow-left"></i> Back to Archived Semesters
+                </a>
+            </div>
+
+            <div class="list-screen-header" style="border-left-color: #8e44ad;">
+                <div style="font-size: 16px; font-weight: 700; color: #1b4d3e; display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-user-check" style="color:#8e44ad;"></i>
+                    <?php echo htmlspecialchars($selectedSem['semester_name']); ?>
+                    <?php if (!empty($selectedSem['school_year'])): ?>
+                        · <?php echo htmlspecialchars($selectedSem['school_year']); ?>
+                    <?php endif; ?>
+                </div>
+                <div style="font-size: 12px; color: #777; margin-top: 6px;">
+                    Every clearance decision the Registrar made in Clearance Status for this semester.
+                </div>
+                <div class="stat-row" style="margin-top: 14px; padding-top: 14px; border-top: 1px dashed #ddd;">
+                    <div class="stat-item">
+                        <span class="stat-num"><?php echo count($myRecRows); ?></span>
+                        <span class="stat-lbl">Total Actions</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-num green"><?php echo $myRecApproved; ?></span>
+                        <span class="stat-lbl">Approved</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-num red"><?php echo $myRecDeclined; ?></span>
+                        <span class="stat-lbl">Declined</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="feed-search-wrap">
+                <i class="fas fa-search"></i>
+                <input type="text" id="myRecSearchInput" placeholder="Search by student name, ID, course, status or note..." oninput="filterMyRecords(this.value)">
+            </div>
+
+            <?php if (empty($myRecRows)): ?>
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>The Registrar has no recorded clearance actions in this semester.</p>
+                </div>
+            <?php else: ?>
+                <div class="roster-simple">
+                    <div class="roster-simple-title">
+                        <i class="fas fa-clipboard-check"></i> Registrar Clearance Actions
+                        <span class="group-count"><?php echo count($myRecRows); ?> record<?php echo count($myRecRows) !== 1 ? 's' : ''; ?></span>
+                    </div>
+                    <table class="myrec-table">
+                        <colgroup>
+                            <col style="width: 14%;">
+                            <col style="width: 24%;">
+                            <col style="width: 14%;">
+                            <col style="width: 12%;">
+                            <col style="width: 20%;">
+                            <col style="width: 16%;">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>Student ID</th>
+                                <th>Full Name</th>
+                                <th>Course / Year / Sec</th>
+                                <th class="c">Action</th>
+                                <th>Note</th>
+                                <th>Date / Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="myRecordsBody">
+                            <?php foreach ($myRecRows as $mr):
+                                $mrName = trim(($mr['chmsu_last_name'] ?? '') . ', ' . ($mr['chmsu_first_name'] ?? ''));
+                                if ($mrName === ',' || $mrName === '') $mrName = '—';
+                                $mrIsApproved = ($mr['status'] === 'clear');
+                                $mrActionText = $mrIsApproved ? 'Approved' : 'Declined';
+                                $mrCourseLine = trim(($mr['chmsu_course'] ?? '') . ' ' . ($mr['chmsu_year'] ?? '') . (!empty($mr['chmsu_section']) ? '-' . $mr['chmsu_section'] : ''));
+                                $mrNote = trim((string)($mr['note'] ?? ''));
+                                $mrSearch = strtolower($mr['student_id'] . ' ' . $mrName . ' ' . $mrCourseLine . ' ' . $mrActionText . ' ' . $mrNote);
+                            ?>
+                            <tr data-search="<?php echo htmlspecialchars($mrSearch, ENT_QUOTES); ?>">
+                                <td><code><?php echo htmlspecialchars($mr['student_id']); ?></code></td>
+                                <td class="myrec-name"><?php echo htmlspecialchars($mrName); ?></td>
+                                <td><?php echo htmlspecialchars($mrCourseLine !== '' ? $mrCourseLine : '—'); ?></td>
+                                <td class="c"><span class="status-badge-tbl <?php echo $mrIsApproved ? 'cleared' : 'none'; ?>" style="<?php echo $mrIsApproved ? '' : 'background:#fdecea;color:#c0392b;'; ?>"><?php echo $mrActionText; ?></span></td>
+                                <td class="myrec-note"><?php echo $mrNote !== '' ? htmlspecialchars($mrNote) : '—'; ?></td>
+                                <td><?php echo !empty($mr['updated_at']) ? date('M d, Y · h:i A', strtotime($mr['updated_at'])) : '—'; ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="noMyRecMatch" class="empty-state" style="display: none; border-radius: 8px;">
+                    <i class="fas fa-search"></i>
+                    <p>No records match your search.</p>
+                </div>
+            <?php endif; ?>
+
+        <?php elseif ($view_mode === 'list' && $selectedSem): ?>
             <!-- ============================================ -->
             <!-- FULL STUDENT LIST — SIMPLE GROUPED VIEW       -->
             <!-- Grouped by Course → Year → Section            -->
@@ -930,6 +1137,39 @@ foreach ($groupedBySY as $syKey => $list) {
             <!-- ============================================ -->
             <?php
             $sid = intval($selectedSem['id']);
+
+            // All office actions for this semester, indexed by student then office (one query).
+            // Same rule as the student's own clearance page: every office in chmsu_offices,
+            // one status per office for the selected semester (clear = Approved, unclear = Declined, else Pending).
+            $normOff = function($n) { return strtolower(trim((string)$n)); };
+            $officeKeys = [];
+            foreach ($allOfficeNames as $on_) {
+                $clean = trim((string)$on_);
+                if ($clean !== '') {
+                    $officeKeys[$normOff($clean)] = $clean;
+                }
+            }
+
+            $allStatusMap = [];
+            $asQ = $conn->query("SELECT id, student_id, office_name, status, note, updated_by, updated_at
+                                 FROM chmsu_clearance_status
+                                 WHERE semester_id = $sid
+                                 ORDER BY CASE WHEN LOWER(TRIM(status)) = 'clear' THEN 3 WHEN LOWER(TRIM(status)) = 'unclear' THEN 2 ELSE 1 END ASC, updated_at ASC, id ASC");
+            if ($asQ) {
+                while ($ar = $asQ->fetch_assoc()) {
+                    $ok_ = $normOff($ar['office_name']);
+                    if ($ok_ === '' || !isset($officeKeys[$ok_])) continue; // only offices that exist, same as the student page
+                    $sk_ = trim((string)$ar['student_id']);
+                    $currStatus = strtolower(trim((string)$ar['status']));
+                    $prev = $allStatusMap[$sk_][$ok_] ?? null;
+                    // a real decision (clear/unclear) is never overwritten by a pending row
+                    if ($prev && in_array(strtolower(trim((string)$prev['status'])), ['clear', 'unclear']) && $currStatus === 'pending') {
+                        continue;
+                    }
+                    $allStatusMap[$sk_][$ok_] = $ar;
+                }
+            }
+            $listTotalOffices = count($officeKeys) > 0 ? count($officeKeys) : $totalOffices;
 
             $studentsList = $conn->query("
                 SELECT *
@@ -952,8 +1192,19 @@ foreach ($groupedBySY as $syKey => $list) {
 
             if ($studentsList && $studentsList->num_rows > 0) {
                 while ($s = $studentsList->fetch_assoc()) {
-                    $cleared = countStudentClearedOffices($conn, $s['chmsu_student_id'], $sid);
-                    $is_cleared = ($cleared >= $totalOffices && $totalOffices > 0);
+                    // Progress is counted from the same office list shown in the chips
+                    $sid_key = trim((string)$s['chmsu_student_id']);
+                    $s['_offices'] = $allStatusMap[$sid_key] ?? [];
+                    $cleared = 0; $declinedN = 0;
+                    foreach ($officeKeys as $offK => $offN) {
+                        $stt = isset($s['_offices'][$offK]) ? strtolower(trim((string)$s['_offices'][$offK]['status'])) : '';
+                        if ($stt === 'clear') $cleared++;
+                        elseif ($stt === 'unclear') $declinedN++;
+                    }
+                    $s['_declined'] = $declinedN;
+                    $is_cleared = ($cleared >= $listTotalOffices && $listTotalOffices > 0);
+                    $pct = ($listTotalOffices > 0) ? round(($cleared / $listTotalOffices) * 100) : 0;
+                    $s['_pct'] = $pct;
 
                     if ($is_cleared) $fullyCount++;
                     elseif ($cleared > 0) $partialCount++;
@@ -1139,6 +1390,12 @@ foreach ($groupedBySY as $syKey => $list) {
                         <span class="group-count"><?php echo $studentCount; ?> student<?php echo $studentCount !== 1 ? 's' : ''; ?></span>
                     </div>
                     <table class="roster-simple-table">
+                        <colgroup>
+                            <col style="width: 20%;">
+                            <col style="width: 36%;">
+                            <col style="width: 18%;">
+                            <col style="width: 26%;">
+                        </colgroup>
                         <thead>
                             <tr>
                                 <th>Student ID</th>
@@ -1151,24 +1408,64 @@ foreach ($groupedBySY as $syKey => $list) {
                             <?php foreach ($g['students'] as $st):
                                 $cleared = $st['_cleared'];
                                 $isCleared = $st['_is_cleared'];
+                                $pct = $st['_pct'] ?? (($listTotalOffices > 0) ? round(($cleared / $listTotalOffices) * 100) : 0);
                                 $fullName = trim($st['chmsu_last_name'] . ', ' . $st['chmsu_first_name']);
 
                                 if ($isCleared) {
                                     $badgeClass = 'cleared';
-                                    $badgeText = 'Fully Cleared';
+                                    $badgeText = 'Fully Cleared (100%)';
                                 } elseif ($cleared > 0) {
                                     $badgeClass = 'progress';
-                                    $badgeText = 'In Progress';
+                                    $badgeText = 'In Progress (' . $pct . '%)';
                                 } else {
                                     $badgeClass = 'none';
-                                    $badgeText = 'Not Cleared';
+                                    $badgeText = 'Not Cleared (0%)';
                                 }
                             ?>
                             <tr data-name="<?php echo htmlspecialchars(strtolower($fullName)); ?>" data-id="<?php echo htmlspecialchars(strtolower($st['chmsu_student_id'])); ?>">
                                 <td class="id-cell"><code><?php echo htmlspecialchars($st['chmsu_student_id']); ?></code></td>
                                 <td class="name-cell"><?php echo htmlspecialchars($fullName); ?></td>
-                                <td class="progress-cell"><?php echo $cleared; ?> / <?php echo $totalOffices; ?></td>
-                                <td><span class="status-badge-tbl <?php echo $badgeClass; ?>"><?php echo $badgeText; ?></span></td>
+                                <td class="progress-cell">
+                                    <button type="button" class="progress-btn" onclick="toggleProgressDetail(this)" title="Tap to see which offices approved">
+                                        <?php echo $cleared; ?> / <?php echo $listTotalOffices; ?> (<?php echo $pct; ?>%) <i class="fas fa-chevron-down"></i>
+                                    </button>
+                                </td>
+                                <td class="status-cell"><span class="status-badge-tbl <?php echo $badgeClass; ?>"><?php echo $badgeText; ?></span></td>
+                            </tr>
+                            <tr class="progress-detail-row" data-open="0" style="display: none;">
+                                <td colspan="4">
+                                    <div style="font-size:12px; color:#555; margin-bottom:8px;">
+                                        <strong style="color:#1e8449;"><?php echo $cleared; ?></strong> approved ·
+                                        <strong style="color:#c0392b;"><?php echo $st['_declined']; ?></strong> declined ·
+                                        <strong><?php echo max($listTotalOffices - $cleared - $st['_declined'], 0); ?></strong> not processed
+                                        (of <?php echo $listTotalOffices; ?> offices — <strong style="color:<?php echo $isCleared ? '#1e8449' : '#b9770e'; ?>;"><?php echo $pct; ?>%</strong>)
+                                    </div>
+                                    <div class="office-chip-wrap">
+                                        <?php foreach ($officeKeys as $offKey => $offName):
+                                            $rec = isset($st['_offices'][$offKey]) ? $st['_offices'][$offKey] : null;
+                                            $offStatus = $rec ? strtolower(trim((string)$rec['status'])) : '';
+                                            if ($offStatus === 'clear') { 
+                                                $chipClass = 'approved'; $chipIcon = 'fa-check-circle'; $chipText = 'Approved'; 
+                                            } elseif ($offStatus === 'unclear') { 
+                                                $chipClass = 'declined'; $chipIcon = 'fa-times-circle'; $chipText = 'Declined'; 
+                                            } else { 
+                                                $chipClass = 'pending'; $chipIcon = 'fa-clock'; $chipText = 'Not Processed'; 
+                                            }
+                                            $chipWhen = ($rec && $offStatus !== '' && $offStatus !== 'pending' && !empty($rec['updated_at']))
+                                                ? ' · ' . date('M d, Y h:i A', strtotime($rec['updated_at'])) : '';
+                                            $chipNote = ($rec && !empty($rec['note'])) ? ' — Note: ' . $rec['note'] : '';
+                                        ?>
+                                        <span class="office-chip <?php echo $chipClass; ?>" <?php echo !empty($chipNote) ? 'title="' . htmlspecialchars(trim($chipNote)) . '"' : ''; ?>>
+                                            <i class="fas <?php echo $chipIcon; ?>"></i>
+                                            <span class="office-chip-name"><?php echo htmlspecialchars($offName); ?>:</span>
+                                            <span class="office-chip-state"><?php echo $chipText . htmlspecialchars($chipWhen); ?></span>
+                                        </span>
+                                        <?php endforeach; ?>
+                                        <?php if (empty($officeKeys)): ?>
+                                            <span style="font-size:12px; color:#999;">No offices found.</span>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -1271,6 +1568,12 @@ foreach ($groupedBySY as $syKey => $list) {
 
                                     <a href="?section=history&semester_id=<?php echo intval($sem['id']); ?>&view=list" class="btn btn-primary btn-sm">
                                         <i class="fas fa-list"></i> View Student List
+                                    </a>
+
+                                    <a href="?section=history&semester_id=<?php echo intval($sem['id']); ?>&view=myrecords" class="btn btn-myrec btn-sm">
+                                        <i class="fas fa-user-check"></i>
+                                        My Actions (Registrar)
+                                        <span class="count-badge"><?php echo $sem['reg_actions']; ?></span>
                                     </a>
                                 </div>
                             </div>
@@ -1426,8 +1729,12 @@ foreach ($groupedBySY as $syKey => $list) {
 
             var visibleInGroup = 0;
             card.querySelectorAll('tbody tr').forEach(function(row) {
+                if (row.classList.contains('progress-detail-row')) { return; }
+                var detailRow = row.nextElementSibling;
+                var hasDetail = detailRow && detailRow.classList.contains('progress-detail-row');
                 if (!groupMatches) {
                     row.style.display = 'none';
+                    if (hasDetail) detailRow.style.display = 'none';
                     return;
                 }
 
@@ -1437,10 +1744,12 @@ foreach ($groupedBySY as $syKey => $list) {
                 var textMatches = !query || name.indexOf(query) !== -1 || id.indexOf(query) !== -1;
                 if (textMatches) {
                     row.style.display = '';
+                    if (hasDetail) detailRow.style.display = (detailRow.getAttribute('data-open') === '1') ? '' : 'none';
                     visibleInGroup++;
                     totalVisible++;
                 } else {
                     row.style.display = 'none';
+                    if (hasDetail) detailRow.style.display = 'none';
                 }
             });
 
@@ -1462,6 +1771,31 @@ foreach ($groupedBySY as $syKey => $list) {
         if (statTotal) {
             statTotal.textContent = totalVisible;
         }
+    }
+
+    // Tap Progress to show which offices approved / declined / not processed
+    function toggleProgressDetail(btn) {
+        var row = btn.closest('tr');
+        var detail = row ? row.nextElementSibling : null;
+        if (!detail || !detail.classList.contains('progress-detail-row')) return;
+        var isOpen = detail.getAttribute('data-open') === '1';
+        detail.setAttribute('data-open', isOpen ? '0' : '1');
+        detail.style.display = isOpen ? 'none' : '';
+        btn.classList.toggle('open', !isOpen);
+    }
+
+    // Search inside the Registrar's own records (view=myrecords)
+    function filterMyRecords(val) {
+        var q = (val || '').toLowerCase().trim();
+        var rows = document.querySelectorAll('#myRecordsBody tr[data-search]');
+        var visible = 0;
+        rows.forEach(function(r) {
+            var show = !q || (r.getAttribute('data-search') || '').indexOf(q) !== -1;
+            r.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+        var none = document.getElementById('noMyRecMatch');
+        if (none) none.style.display = (visible === 0 && rows.length > 0) ? 'block' : 'none';
     }
 
     function resetStudentFilters() {

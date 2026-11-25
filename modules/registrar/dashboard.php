@@ -576,7 +576,6 @@ if (isset($_GET['gmail_connected']) && $_GET['gmail_connected'] == 1 && $has_ema
         <ul class="sidebar-menu">
             <li><a href="?section=dashboard" class="active"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
             <li><a href="?section=masterlist"><i class="fas fa-users"></i> Master List</a></li>
-            <li><a href="?section=clearance"><i class="fas fa-clipboard-check"></i> Clearance</a></li>
             <li><a href="?section=clearance_status"><i class="fas fa-user-check"></i> Clearance Status</a></li>
             <li><a href="?section=history"><i class="fas fa-history"></i> Clearance History</a></li>
             <li><a href="?section=reports"><i class="fas fa-chart-bar"></i> Reports</a></li>

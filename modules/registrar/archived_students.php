@@ -249,7 +249,6 @@ $total_count = $graduates->num_rows;
         <ul class="sidebar-menu">
             <li><a href="?section=dashboard">Dashboard</a></li>
             <li><a href="?section=masterlist">Master List</a></li>
-            <li><a href="?section=clearance">Clearance</a></li>
             <li><a href="?section=requirements">Requirements</a></li>
             <li><a href="?section=submissions">Submissions</a></li>
             <li><a href="?section=reports">Reports</a></li>

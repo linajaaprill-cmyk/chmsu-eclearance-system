@@ -256,25 +256,76 @@ if ($type === 'word') {
     exit;
 }
 if ($type === 'pdf') {
-    if (file_exists(__DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php')) {
-        require_once __DIR__ . '/../../vendor/tecnickcom/tcpdf/tcpdf.php';
-    } elseif (file_exists('C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php')) {
-        require_once 'C:/xampp/phpMyAdmin/vendor/tecnickcom/tcpdf/tcpdf.php';
+    require_once __DIR__ . '/../../includes/pdf_renderer.php';
+    $cfg = chmsu_pdf_get_settings();
+
+    $pdfBody  = '<div class="section-banner">I. SYSTEM OVERVIEW</div>';
+    $pdfBody .= '<table class="summary">'
+        . '<tr><th style="width:70%;">Metric</th><th style="width:30%;text-align:right;">Total</th></tr>'
+        . '<tr><td style="width:70%;">Total Courses / Programs</td><td style="width:30%;text-align:right;">' . (int)$reportData['courses'] . '</td></tr>'
+        . '<tr><td style="width:70%;">Total Clearing Offices</td><td style="width:30%;text-align:right;">' . (int)$reportData['offices'] . '</td></tr>'
+        . '<tr><td style="width:70%;">Total Class Sections</td><td style="width:30%;text-align:right;">' . (int)$reportData['sections'] . '</td></tr>'
+        . '<tr><td style="width:70%;">Total Admin Accounts</td><td style="width:30%;text-align:right;">' . (int)$reportData['admins'] . '</td></tr>'
+        . '<tr><td style="width:70%;">Total Office Accounts</td><td style="width:30%;text-align:right;">' . (int)$reportData['officeAccts'] . '</td></tr>'
+        . '</table><div class="spacer"></div>';
+
+    $pdfBody .= '<div class="section-banner">II. REGISTERED COURSES (' . count($reportData['courses_data']) . ')</div>';
+    $pdfBody .= '<table class="data"><thead><tr><th style="width:10%;text-align:center;">#</th><th style="width:25%;text-align:left;">Course Code</th><th style="width:65%;text-align:left;">Course Name</th></tr></thead><tbody>';
+    if (empty($reportData['courses_data'])) {
+        $pdfBody .= '<tr><td colspan="3" style="text-align:center;">No courses recorded.</td></tr>';
+    } else {
+        $n = 1;
+        foreach ($reportData['courses_data'] as $c) {
+            $pdfBody .= '<tr><td style="width:10%;text-align:center;">' . $n++ . '</td><td style="width:25%;">' . adm_h($c['course_code']) . '</td><td style="width:65%;">' . adm_h($c['course_name']) . '</td></tr>';
+        }
     }
-    
-    $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
-    $pdf->SetCreator('CHMSU E-Clearance System');
-    $pdf->SetAuthor('CHMSU Admin');
-    $pdf->SetTitle($reportData['filename']);
-    $pdf->setPrintHeader(false);
-    $pdf->setPrintFooter(false);
-    $pdf->SetMargins(12, 12, 12);
-    $pdf->SetAutoPageBreak(TRUE, 12);
-    $pdf->SetFont('helvetica', '', 8);
-    $pdf->AddPage();
-    $html = adm_report_html('pdf', $reportData);
-    $pdf->writeHTML($html, true, false, true, false, '');
-    $pdf->Output($reportData['filename'] . '.pdf', 'D');
+    $pdfBody .= '</tbody></table><div class="spacer"></div>';
+
+    $pdfBody .= '<div class="section-banner">III. CLEARING OFFICES (' . count($reportData['offices_data']) . ')</div>';
+    $pdfBody .= '<table class="data"><thead><tr><th style="width:15%;text-align:center;">#</th><th style="width:85%;text-align:left;">Office Name</th></tr></thead><tbody>';
+    if (empty($reportData['offices_data'])) {
+        $pdfBody .= '<tr><td colspan="2" style="text-align:center;">No offices recorded.</td></tr>';
+    } else {
+        $n = 1;
+        foreach ($reportData['offices_data'] as $o) {
+            $pdfBody .= '<tr><td style="width:15%;text-align:center;">' . $n++ . '</td><td style="width:85%;">' . adm_h($o['office_name']) . '</td></tr>';
+        }
+    }
+    $pdfBody .= '</tbody></table><div class="spacer"></div>';
+
+    $pdfBody .= '<div class="section-banner">IV. CLASS SECTIONS (' . count($reportData['sections_data']) . ')</div>';
+    $pdfBody .= '<table class="data"><thead><tr><th style="width:10%;text-align:center;">#</th><th style="width:30%;text-align:left;">Course</th><th style="width:30%;text-align:center;">Year Level</th><th style="width:30%;text-align:center;">Section</th></tr></thead><tbody>';
+    if (empty($reportData['sections_data'])) {
+        $pdfBody .= '<tr><td colspan="4" style="text-align:center;">No sections recorded.</td></tr>';
+    } else {
+        $n = 1;
+        foreach ($reportData['sections_data'] as $s) {
+            $pdfBody .= '<tr><td style="width:10%;text-align:center;">' . $n++ . '</td><td style="width:30%;">' . adm_h($s['course']) . '</td><td style="width:30%;text-align:center;">' . adm_h(adm_year_label($s['year'])) . '</td><td style="width:30%;text-align:center;">' . adm_h($s['section_name']) . '</td></tr>';
+        }
+    }
+    $pdfBody .= '</tbody></table><div class="spacer"></div>';
+
+    $pdfBody .= '<div class="section-banner">V. SEMESTERS (' . count($reportData['sem_data']) . ')</div>';
+    $pdfBody .= '<table class="data"><thead><tr><th style="width:10%;text-align:center;">#</th><th style="width:45%;text-align:left;">Semester Name</th><th style="width:25%;text-align:center;">Code</th><th style="width:20%;text-align:center;">Status</th></tr></thead><tbody>';
+    if (empty($reportData['sem_data'])) {
+        $pdfBody .= '<tr><td colspan="4" style="text-align:center;">No semesters recorded.</td></tr>';
+    } else {
+        $n = 1;
+        foreach ($reportData['sem_data'] as $sm) {
+            $stLbl = !empty($sm['is_current']) ? 'Active (Current)' : 'Inactive';
+            $pdfBody .= '<tr><td style="width:10%;text-align:center;">' . $n++ . '</td><td style="width:45%;">' . adm_h($sm['semester_name']) . '</td><td style="width:25%;text-align:center;">' . adm_h($sm['semester_code']) . '</td><td style="width:20%;text-align:center;">' . $stLbl . '</td></tr>';
+        }
+    }
+    $pdfBody .= '</tbody></table>';
+
+    chmsu_pdf_render(
+        $pdfBody,
+        'System Management Report',
+        'Office of the System Administrator — Full System Configuration',
+        'System Administrator (' . $admin . ')',
+        $reportData['filename'] . '.pdf',
+        $cfg
+    );
     exit;
 }
 

@@ -246,10 +246,87 @@ if ($exportType === 'excel') {
         . $cssBase
         . ' table.data{mso-table-lspace:0pt;mso-table-rspace:0pt;} table.data th{mso-line-height-rule:exactly;} table.data td{mso-line-height-rule:exactly;}';
 } else if ($exportType === 'pdf') {
-    $isPdf = true;
-    $headXml = '';
-    $css = $cssBase;
-    ob_start();
+    require_once __DIR__ . '/../../includes/pdf_renderer.php';
+    $cfg = chmsu_pdf_get_settings();
+
+    if (!function_exists('off_cell_pdf')) {
+        function off_cell_pdf($key, $row, $num) {
+            switch ($key) {
+                case 'no':     return (string)$num;
+                case 'sid':    return (string)$row['sid'];
+                case 'name':   return (string)$row['name'];
+                case 'label':  return (string)$row['label'];
+                case 'note':   return (string)($row['note'] ?? '');
+                case 'upd':    return !empty($row['upd']) ? date('m/d/Y h:i A', strtotime($row['upd'])) : '';
+                case 'upd_by': return (string)($row['upd_by'] ?? '');
+            }
+            return '';
+        }
+    }
+
+    $colHeaders = '<tr>';
+    foreach ($columns as $c) {
+        $align = ($c[3] === 'center') ? 'center' : 'left';
+        $colHeaders .= '<th style="width:' . $c[2] . '%;text-align:' . $align . ';">' . rpt_e($c[1]) . '</th>';
+    }
+    $colHeaders .= '</tr>';
+
+    $pdfBody = '<div class="section-banner">Office: ' . rpt_e($office) . ' — ' . rpt_e($reportTitle) . '</div>';
+
+    if (empty($rows)) {
+        $pdfBody .= '<table class="data"><thead>' . $colHeaders . '</thead><tbody>';
+        $pdfBody .= '<tr><td colspan="' . $colCount . '" style="text-align:center;padding:12px;">No records found.</td></tr>';
+        $pdfBody .= '</tbody></table>';
+    } else {
+        $num = 1;
+        $lastGroup = '';
+        $tableOpen = false;
+        foreach ($rows as $row) {
+            $groupKey = $row['course'] . '|' . $row['yr'] . '|' . $row['sec'];
+            if ($groupKey !== $lastGroup) {
+                if ($tableOpen) {
+                    $pdfBody .= '</tbody></table><div class="spacer"></div>';
+                }
+                $groupTitle = strtoupper($row['course']) . ' — ' . rpt_ordinal($row['yr']) . ' — Section ' . strtoupper($row['sec']);
+                $pdfBody .= '<div class="group-label">' . rpt_e($groupTitle) . '</div>';
+                $pdfBody .= '<table class="data"><thead>' . $colHeaders . '</thead><tbody>';
+                $tableOpen = true;
+                $lastGroup = $groupKey;
+                $num = 1;
+            }
+            $pdfBody .= '<tr>';
+            foreach ($columns as $c) {
+                $align = ($c[3] === 'center') ? 'center' : 'left';
+                $pdfBody .= '<td style="width:' . $c[2] . '%;text-align:' . $align . ';">' . rpt_e(off_cell_pdf($c[0], $row, $num)) . '</td>';
+            }
+            $pdfBody .= '</tr>';
+            $num++;
+        }
+        if ($tableOpen) {
+            $pdfBody .= '</tbody></table><div class="spacer"></div>';
+        }
+    }
+
+    $pdfBody .= '<div class="section-banner">SUMMARY STATISTICS</div>';
+    $pdfBody .= '<table class="summary">'
+        . '<tr><th style="width:70%;">Metric</th><th style="width:30%;text-align:right;">Count</th></tr>'
+        . '<tr><td style="width:70%;">Total Students</td><td style="width:30%;text-align:right;">' . $totalStudents . '</td></tr>'
+        . '<tr><td style="width:70%;">Approved</td><td style="width:30%;text-align:right;">' . $approvedCount . '</td></tr>'
+        . '<tr><td style="width:70%;">Pending</td><td style="width:30%;text-align:right;">' . $pendingCount . '</td></tr>'
+        . '<tr><td style="width:70%;">Declined</td><td style="width:30%;text-align:right;">' . $declinedCount . '</td></tr>'
+        . '<tr><td style="width:70%;">Approval Rate</td><td style="width:30%;text-align:right;">' . $approvalRate . '%</td></tr>'
+        . '<tr><td style="width:70%;">Records in this Report</td><td style="width:30%;text-align:right;">' . count($rows) . '</td></tr>'
+        . '</table>';
+
+    chmsu_pdf_render(
+        $pdfBody,
+        $reportTitle,
+        $filterSummaryText,
+        $office . ' Office',
+        $baseName . '.pdf',
+        $cfg
+    );
+    exit;
 } else {
     exit('Invalid export type');
 }

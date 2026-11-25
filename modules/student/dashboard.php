@@ -34,8 +34,8 @@ if ($currentSemRow) {
     $currentSemSY = $currentSemRow['school_year'] ?? '';
 }
 
-// Get all offices with clearance status scoped to CURRENT semester
-$offices_result = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY office_name");
+// Get all offices with clearance status scoped to CURRENT semester (sorted: Library, Accounting, OSA, Dean, Registrar)
+$offices_result = $conn->query("SELECT office_name FROM chmsu_offices ORDER BY FIELD(LOWER(TRIM(office_name)), 'library', 'accounting', 'osa', 'dean', 'registrar'), office_name ASC");
 $offices = [];
 $officeStatuses = [];
 $totalOffices = 0;
@@ -80,7 +80,7 @@ while ($office_row = $offices_result->fetch_assoc()) {
 $allApproved = ($approvedCount == $totalOffices && $totalOffices > 0);
 $progressPercent = ($totalOffices > 0) ? round(($approvedCount / $totalOffices) * 100) : 0;
 
-$student_email = $student['email'] ?? null;
+$student_email = !empty($student['email']) ? $student['email'] : (!empty($master['email']) ? $master['email'] : null);
 $has_email = !empty($student_email);
 
 if (isset($_GET['gmail_connected']) && $_GET['gmail_connected'] == 1 && $has_email) {
@@ -1142,7 +1142,7 @@ if ($feed_posts_temp && $feed_posts_temp->num_rows > 0) {
                         </div>
                         <div class="email-actions">
                             <button onclick="openEmailModal()" class="btn-email-change">
-                                <i class="fas fa-edit"></i> Change
+                                <i class="fas fa-sync-alt"></i> Switch Gmail
                             </button>
                         </div>
                     </div>

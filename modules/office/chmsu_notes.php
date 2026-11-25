@@ -87,7 +87,21 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
     $mentioned_names_raw = isset($_POST['mentioned_students']) ? $_POST['mentioned_students'] : '';
     $mentioned_sections_raw = isset($_POST['mentioned_sections']) ? $_POST['mentioned_sections'] : '';
     $mentioned_courses_raw = isset($_POST['mentioned_courses']) ? $_POST['mentioned_courses'] : '';
+    $mentioned_years_raw = isset($_POST['mentioned_years']) ? $_POST['mentioned_years'] : '';
     $office = $_SESSION['office'];
+
+    // STRICT CHECK: IF BOTH INDIVIDUAL AND GROUP MENTIONS ARE PRESENT, DO NOT PUSH THROUGH AND WARN!
+    $has_individual = !empty(trim($mentioned_names_raw));
+    $has_group = (!empty($mentioned_sections_raw) && $mentioned_sections_raw !== '[]') ||
+                 (!empty($mentioned_courses_raw) && $mentioned_courses_raw !== '[]') ||
+                 (!empty($mentioned_years_raw) && $mentioned_years_raw !== '[]');
+
+    if ($has_individual && $has_group) {
+        $_SESSION['note_flash_error'] = "Warning: Cannot mention both individual students and group (program/year/section) together. Please add only one, not both.";
+        $note_redirect = (isset($_SESSION['role']) && $_SESSION['role'] === 'registrar') ? '?section=note' : '?officesection=note';
+        header("Location: " . $note_redirect);
+        exit;
+    }
 
     // Parse mentioned sections (JSON array)
     $mentioned_sections = array();
@@ -105,7 +119,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
         }
     }
 
-    // Parse mentioned courses (JSON array)
+    // Parse mentioned courses/programs (JSON array)
     $mentioned_courses = array();
     if (!empty($mentioned_courses_raw)) {
         $decoded_c = json_decode($mentioned_courses_raw, true);
@@ -114,6 +128,21 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
                 $cc = isset($cr['course']) ? strtoupper(trim($cr['course'])) : '';
                 if ($cc !== '') {
                     $mentioned_courses[] = array('course' => $cc);
+                }
+            }
+        }
+    }
+
+    // Parse mentioned years (JSON array)
+    $mentioned_years = array();
+    if (!empty($mentioned_years_raw)) {
+        $decoded_y = json_decode($mentioned_years_raw, true);
+        if (is_array($decoded_y)) {
+            foreach ($decoded_y as $yr) {
+                $y = isset($yr['year']) ? trim($yr['year']) : '';
+                $c = isset($yr['course']) ? strtoupper(trim($yr['course'])) : '';
+                if ($y !== '') {
+                    $mentioned_years[] = array('year' => $y, 'course' => $c);
                 }
             }
         }
@@ -150,7 +179,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
         }
     }
 
-    // Get students by course
+    // Get students by course/program
     $course_students = array();
     foreach ($mentioned_courses as $cr) {
         $clean_course = $cr['course'];
@@ -166,10 +195,32 @@ if (isset($_POST['action']) && $_POST['action'] == 'post_note') {
         }
         if ($courseQuery->num_rows == 0) {
             $courseQuery2 = $conn->query("SELECT chmsu_student_id, chmsu_full_name, chmsu_course, chmsu_year, chmsu_section, email 
-                                          FROM chmsu_students_master 
-                                          WHERE UPPER(TRIM(chmsu_course)) = '$clean_course'
-                                          ORDER BY CAST(chmsu_year AS UNSIGNED) ASC, chmsu_section ASC, chmsu_last_name ASC, chmsu_first_name ASC");
+                                           FROM chmsu_students_master 
+                                           WHERE UPPER(TRIM(chmsu_course)) = '$clean_course'
+                                           ORDER BY CAST(chmsu_year AS UNSIGNED) ASC, chmsu_section ASC, chmsu_last_name ASC, chmsu_first_name ASC");
             while ($s = $courseQuery2->fetch_assoc()) {
+                $course_students[] = $s;
+            }
+        }
+    }
+
+    // Get students by year level (e.g. All 1st Year, All 2nd Year, etc.)
+    $year_students = array();
+    foreach ($mentioned_years as $yr) {
+        $clean_year = $yr['year'];
+        $clean_course = $yr['course'];
+        $courseClause = $clean_course !== '' ? " AND UPPER(TRIM(chmsu_course)) = '$clean_course' " : "";
+
+        $yearQuery = $conn->query("SELECT chmsu_student_id, chmsu_full_name, chmsu_course, chmsu_year, chmsu_section, email 
+                                   FROM chmsu_students_master 
+                                   WHERE chmsu_year = '$clean_year' 
+                                   $courseClause
+                                   AND is_archived = 0
+                                   ORDER BY chmsu_course ASC, chmsu_section ASC, chmsu_last_name ASC, chmsu_first_name ASC");
+        if ($yearQuery) {
+            while ($s = $yearQuery->fetch_assoc()) {
+                $year_students[] = $s;
+                // Add to course_students for grouping so they appear in post content
                 $course_students[] = $s;
             }
         }
@@ -661,6 +712,21 @@ while (ob_get_level() > 0) { ob_end_flush(); }
         body.dark-mode .border-gray-200, body.dark-mode .border-gray-300 { border-color: #333 !important; }
         body.dark-mode #noteModal > div { background: #1a1a1a; border-color: #333; }
         
+        .note-post:target {
+            scroll-margin-top: 90px;
+            box-shadow: 0 0 0 3px #1b4d3e, 0 10px 15px -3px rgba(0, 0, 0, 0.15) !important;
+            border-color: #1b4d3e !important;
+            animation: targetHighlight 2s ease-out;
+        }
+        @keyframes targetHighlight {
+            0% { background-color: #eef7f2; }
+            100% { background-color: #ffffff; }
+        }
+        body.dark-mode .note-post:target {
+            box-shadow: 0 0 0 3px #f1c40f, 0 10px 15px -3px rgba(0, 0, 0, 0.3) !important;
+            border-color: #f1c40f !important;
+        }
+        
         @media (max-width: 768px) {
             .office-sidebar { width: 100%; position: relative; height: auto; }
             .main-content { margin-left: 0; }
@@ -877,7 +943,7 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                         $isLong = strlen($cleanContent) > 500 || substr_count($cleanContent, "\n") > 10;
                         $searchBlob = strtolower($post['title'] . ' ' . $cleanContent);
                     ?>
-                    <article class="note-post border border-gray-300 rounded bg-white mb-4 p-4 hover:shadow-md transition-shadow" data-search="<?php echo htmlspecialchars($searchBlob, ENT_QUOTES); ?>">
+                    <article id="post-<?php echo $post['id']; ?>" class="note-post border border-gray-300 rounded bg-white mb-4 p-4 hover:shadow-md transition-shadow" data-search="<?php echo htmlspecialchars($searchBlob, ENT_QUOTES); ?>">
                         <div class="flex justify-between items-start gap-3 mb-2">
                             <div class="flex flex-wrap items-center gap-2">
                                 <span class="font-bold text-[#1b4d3e] text-sm"><i class="fas fa-building mr-1"></i> <?php echo htmlspecialchars($post['office_name']); ?></span>
@@ -899,10 +965,14 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                         <div class="post-content text-sm text-gray-800 leading-relaxed mb-2 p-3 bg-gray-50 rounded break-words" id="postContent_<?php echo $post['id']; ?>">
                             <?php echo nl2br(htmlspecialchars($cleanContent)); ?>
 
+                            <?php 
+                            $target_student_id = isset($_GET['highlight_student']) ? trim($_GET['highlight_student']) : '';
+                            $target_student_name = isset($_GET['highlight_name']) ? trim($_GET['highlight_name']) : '';
+                            ?>
                             <?php if (!empty($courseBlocks)): ?>
                                 <?php foreach ($courseBlocks as $courseName => $subgroups): ?>
                                     <div class="course-separator-box">
-                                        <div class="course-label"><i class="fas fa-graduation-cap"></i> <?php echo htmlspecialchars($courseName); ?></div>
+                                        <div class="course-label"><i class="fas fa-graduation-cap"></i> Program: <?php echo htmlspecialchars($courseName); ?></div>
                                         <?php foreach ($subgroups as $subLabel => $names): ?>
                                             <div class="course-subgroup">
                                                 <div class="course-sub-label">
@@ -910,8 +980,15 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                                                     <span style="font-size: 10px; font-weight: normal; opacity: 0.8;">(<?php echo count($names); ?> students)</span>
                                                 </div>
                                                 <div class="course-sub-names">
-                                                    <?php foreach ($names as $n): ?>
-                                                        <span class="sec-name"><i class="fas fa-user-graduate"></i><?php echo htmlspecialchars($n); ?></span>
+                                                    <?php foreach ($names as $n): 
+                                                        $isTargetName = false;
+                                                        if (!empty($target_student_name) && (strcasecmp(trim($n), $target_student_name) === 0 || stripos($n, $target_student_name) !== false)) {
+                                                            $isTargetName = true;
+                                                        }
+                                                    ?>
+                                                        <span class="sec-name <?php echo $isTargetName ? 'highlighted-student-target' : ''; ?>" <?php if ($isTargetName): ?>style="color: #c0392b !important; font-weight: bold !important; background-color: #fce4e4 !important; border: 2px solid #c0392b !important;"<?php endif; ?>>
+                                                            <i class="fas <?php echo $isTargetName ? 'fa-check-circle' : 'fa-user-graduate'; ?>" <?php if ($isTargetName): ?>style="color: #c0392b;"<?php endif; ?>></i><?php echo htmlspecialchars($n); ?>
+                                                        </span>
                                                     <?php endforeach; ?>
                                                 </div>
                                             </div>
@@ -928,8 +1005,15 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                                             <span style="font-size: 10px; font-weight: normal; opacity: 0.8;">(<?php echo count($names); ?> students)</span>
                                         </div>
                                         <div class="sec-names">
-                                            <?php foreach ($names as $n): ?>
-                                                <span class="sec-name"><i class="fas fa-user-graduate"></i><?php echo htmlspecialchars($n); ?></span>
+                                            <?php foreach ($names as $n): 
+                                                $isTargetName = false;
+                                                if (!empty($target_student_name) && (strcasecmp(trim($n), $target_student_name) === 0 || stripos($n, $target_student_name) !== false)) {
+                                                    $isTargetName = true;
+                                                }
+                                            ?>
+                                                <span class="sec-name <?php echo $isTargetName ? 'highlighted-student-target' : ''; ?>" <?php if ($isTargetName): ?>style="color: #c0392b !important; font-weight: bold !important; background-color: #fce4e4 !important; border: 2px solid #c0392b !important;"<?php endif; ?>>
+                                                    <i class="fas <?php echo $isTargetName ? 'fa-check-circle' : 'fa-user-graduate'; ?>" <?php if ($isTargetName): ?>style="color: #c0392b;"<?php endif; ?>></i><?php echo htmlspecialchars($n); ?>
+                                                </span>
                                             <?php endforeach; ?>
                                         </div>
                                     </div>
@@ -940,8 +1024,15 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                                 <div class="mention-section">
                                     <div class="mention-title"><i class="fas fa-user-tag"></i> Individually Mentioned Students (<?php echo count($mentionedNames); ?>):</div>
                                     <div class="mention-names-grid">
-                                        <?php foreach ($mentionedNames as $name): ?>
-                                            <span class="mention-pill"><i class="fas fa-user"></i><?php echo htmlspecialchars($name); ?></span>
+                                        <?php foreach ($mentionedNames as $name): 
+                                            $isTargetName = false;
+                                            if (!empty($target_student_name) && (strcasecmp(trim($name), $target_student_name) === 0 || stripos($name, $target_student_name) !== false)) {
+                                                $isTargetName = true;
+                                            }
+                                        ?>
+                                            <span class="mention-pill <?php echo $isTargetName ? 'highlighted-student-target' : ''; ?>" <?php if ($isTargetName): ?>style="color: #c0392b !important; font-weight: bold !important; background-color: #fce4e4 !important; border: 2px solid #c0392b !important;"<?php endif; ?>>
+                                                <i class="fas <?php echo $isTargetName ? 'fa-check-circle' : 'fa-user'; ?>" <?php if ($isTargetName): ?>style="color: #c0392b;"<?php endif; ?>></i><?php echo htmlspecialchars($name); ?>
+                                            </span>
                                         <?php endforeach; ?>
                                     </div>
                                 </div>
@@ -1008,33 +1099,32 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                 </div>
 
                 <div class="mb-4">
-                    <label class="block mb-1 text-xs text-gray-700"><i class="fas fa-users"></i> Mentions</label>
-                    <div class="text-[11px] text-gray-500 mb-2">Pick a mode below. Course mode groups all students under their course → year → section automatically.</div>
+                    <label class="block mb-1 text-xs text-gray-700 font-semibold"><i class="fas fa-users"></i> Mentions</label>
+                    <div class="text-[11px] text-gray-500 mb-2">Individual mode mentions specific students only. Program, Year &amp; Section mode allows mentioning entire programs, whole year levels (1st to 4th year), or sections.</div>
 
                     <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-                        <span class="text-xs text-gray-700">Mention Mode</span>
+                        <span class="text-xs text-gray-700 font-semibold">Mention Mode</span>
                         <div class="inline-flex bg-gray-100 border border-gray-300 rounded-full p-[3px] select-none" id="modeSegmented">
-                            <button type="button" class="mode-btn active px-3.5 py-1.5 rounded-full text-[11px] font-bold text-gray-600 inline-flex items-center gap-1.5" data-mode="student" onclick="setMentionMode('student')"><i class="fas fa-user"></i> Students</button>
-                            <button type="button" class="mode-btn px-3.5 py-1.5 rounded-full text-[11px] font-bold text-gray-600 inline-flex items-center gap-1.5" data-mode="section" onclick="setMentionMode('section')"><i class="fas fa-layer-group"></i> Sections</button>
-                            <button type="button" class="mode-btn course-mode px-3.5 py-1.5 rounded-full text-[11px] font-bold text-gray-600 inline-flex items-center gap-1.5" data-mode="course" onclick="setMentionMode('course')"><i class="fas fa-graduation-cap"></i> Courses</button>
+                            <button type="button" class="mode-btn active px-3.5 py-1.5 rounded-full text-[11px] font-bold text-gray-600 inline-flex items-center gap-1.5" data-mode="student" onclick="setMentionMode('student')"><i class="fas fa-user"></i> Individual Students</button>
+                            <button type="button" class="mode-btn px-3.5 py-1.5 rounded-full text-[11px] font-bold text-gray-600 inline-flex items-center gap-1.5" data-mode="course_section" onclick="setMentionMode('course_section')"><i class="fas fa-graduation-cap"></i> Program, Year &amp; Section</button>
                         </div>
                     </div>
 
                     <div class="flex flex-col sm:flex-row gap-2">
-                        <select id="courseFilter" onchange="onCourseChange()" class="w-full sm:w-36 flex-shrink-0 px-2 py-2 text-xs border border-gray-300 rounded-lg bg-white">
-                            <option value="">All Courses</option>
+                        <select id="courseFilter" onchange="onCourseChange()" class="w-full sm:w-44 flex-shrink-0 px-2.5 py-2 text-xs border border-gray-300 rounded-lg bg-white font-medium">
+                            <option value="">All Programs</option>
                             <?php foreach ($allCourses as $c): ?>
                                 <option value="<?php echo htmlspecialchars($c); ?>"><?php echo htmlspecialchars($c); ?></option>
                             <?php endforeach; ?>
                         </select>
 
                         <div class="student-scanner relative flex-1">
-                            <input type="text" id="mentionSearch" placeholder="Type a student name..." autocomplete="off" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-[13px] bg-white focus:outline-none focus:border-[#1b4d3e]">
+                            <input type="text" id="mentionSearch" placeholder="Search individual student by name or ID..." autocomplete="off" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-[13px] bg-white focus:outline-none focus:border-[#1b4d3e]">
                             <div class="student-suggestions" id="mentionSuggestions"></div>
                         </div>
                     </div>
 
-                    <small class="block mt-1.5 text-[10px] text-gray-500" id="modeHint"><strong>Students</strong> mode — search by student name, ID, or course.</small>
+                    <small class="block mt-1.5 text-[10px] text-gray-500" id="modeHint"><strong>Individual Students</strong> mode — strictly individual students only (not mixed with program/year/section).</small>
 
                     <div class="flex flex-wrap gap-1.5 mt-2 p-2 bg-gray-50 rounded-lg min-h-[40px] border border-dashed border-gray-300" id="mentionTagsContainer">
                         <span style="color: #999; font-size: 11px;" id="emptyMentionText">No mentions yet</span>
@@ -1042,6 +1132,7 @@ while (ob_get_level() > 0) { ob_end_flush(); }
                     <input type="hidden" name="mentioned_students" id="mentionedStudents" value="">
                     <input type="hidden" name="mentioned_sections" id="mentionedSections" value="">
                     <input type="hidden" name="mentioned_courses" id="mentionedCourses" value="">
+                    <input type="hidden" name="mentioned_years" id="mentionedYears" value="">
                 </div>
 
                 <button type="submit" class="w-full bg-[#1b4d3e] hover:bg-[#2d6a4f] text-white py-2.5 rounded-lg text-sm font-bold"><i class="fas fa-paper-plane"></i> Post &amp; Mention Students</button>
@@ -1061,7 +1152,8 @@ var courses  = <?php echo json_encode($allCourses); ?>;
 
 var selectedMentions = [];
 var selectedSections = [];
-var selectedCourses = [];
+var selectedCourses  = [];
+var selectedYears    = [];
 var mentionMode = 'student';
 
 // ============================================
@@ -1104,25 +1196,32 @@ function toggleContent(postId) {
 function setMentionMode(mode) {
     mentionMode = mode;
     document.querySelectorAll('#modeSegmented .mode-btn').forEach(function(btn) {
-                if (btn.dataset.mode === mode) {
+        if (btn.dataset.mode === mode) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
         }
     });
 
+    // Strictly separate Individual from Program / Year / Section
+    if (mode === 'student') {
+        selectedSections = [];
+        selectedCourses  = [];
+        selectedYears    = [];
+    } else {
+        selectedMentions = [];
+    }
+    updateMentionTags();
+
     var searchInput = document.getElementById('mentionSearch');
     var hint = document.getElementById('modeHint');
 
     if (mode === 'student') {
-        searchInput.placeholder = 'Type a student name...';
-        hint.innerHTML = '<strong>Students</strong> mode — search by student name, ID, or course.';
-    } else if (mode === 'section') {
-        searchInput.placeholder = 'Type a section letter (A, B, C...)...';
-        hint.innerHTML = '<strong>Sections</strong> mode — pick a course, then type a section letter to mention whole sections across years.';
-    } else if (mode === 'course') {
-        searchInput.placeholder = 'Type a course code (e.g., BSIS)...';
-        hint.innerHTML = '<strong>Courses</strong> mode — mention an entire course. All students under it will be grouped by year & section.';
+        searchInput.placeholder = 'Search individual student by name or ID...';
+        hint.innerHTML = '<strong>Individual Students</strong> mode — strictly individual students only (not mixed with program/year/section).';
+    } else {
+        searchInput.placeholder = 'Search program, year level (1st-4th), or section...';
+        hint.innerHTML = '<strong>Program, Year & Section</strong> mode — select program, year level (all 1st to 4th year), or sections.';
     }
 
     searchInput.value = '';
@@ -1131,53 +1230,174 @@ function setMentionMode(mode) {
 }
 
 function onCourseChange() {
-    document.getElementById('mentionSearch').dispatchEvent(new Event('input'));
+    if (mentionMode === 'course_section') {
+        renderMentionSuggestions();
+    } else {
+        var searchInput = document.getElementById('mentionSearch');
+        if (searchInput.value.trim().length > 0) {
+            renderMentionSuggestions();
+        }
+    }
 }
 
-document.getElementById('mentionSearch').addEventListener('input', function() {
-    var raw = this.value.trim();
+function renderMentionSuggestions() {
+    var raw = document.getElementById('mentionSearch').value.trim();
     var search = raw.toLowerCase();
     var suggestions = document.getElementById('mentionSuggestions');
     var courseFilter = document.getElementById('courseFilter').value.toUpperCase();
 
-    if (search.length < 1) {
-        suggestions.classList.remove('show');
-        return;
-    }
-
     var html = '';
 
     if (mentionMode === 'student') {
+        if (search.length < 1) {
+            suggestions.classList.remove('show');
+            return;
+        }
+
+        var cleanSearch = search.replace(/[^a-z0-9]/g, '');
+
         var matchedStudents = students.filter(function(s) {
             if (courseFilter && (s.chmsu_course || '').toUpperCase() !== courseFilter) return false;
-            return selectedMentions.indexOf(s.chmsu_full_name) === -1 &&
-                (s.chmsu_full_name.toLowerCase().indexOf(search) !== -1 ||
-                 s.chmsu_last_name.toLowerCase().indexOf(search) !== -1 ||
-                 s.chmsu_first_name.toLowerCase().indexOf(search) !== -1 ||
-                 s.chmsu_student_id.indexOf(search) !== -1);
+            if (selectedMentions.indexOf(s.chmsu_full_name) !== -1) return false;
+
+            var fullName = (s.chmsu_full_name || '').toLowerCase();
+            var lastName = (s.chmsu_last_name || '').toLowerCase();
+            var firstName = (s.chmsu_first_name || '').toLowerCase();
+            var studentId = (s.chmsu_student_id || '').toLowerCase();
+            var course = (s.chmsu_course || '').toLowerCase();
+            var year = String(s.chmsu_year || '').toLowerCase();
+            var section = (s.chmsu_section || '').toLowerCase();
+            
+            var classCombo = (course + year + section).replace(/[^a-z0-9]/g, '');
+            var secCombo = (year + section).replace(/[^a-z0-9]/g, '');
+
+            return fullName.indexOf(search) !== -1 ||
+                   lastName.indexOf(search) !== -1 ||
+                   firstName.indexOf(search) !== -1 ||
+                   studentId.indexOf(search) !== -1 ||
+                   (cleanSearch && classCombo.indexOf(cleanSearch) !== -1) ||
+                   (cleanSearch && secCombo.indexOf(cleanSearch) !== -1);
         });
 
         if (matchedStudents.length > 0) {
-            html += '<div class="suggestion-section-title"><i class="fas fa-user"></i> Students</div>';
+            html += '<div class="suggestion-section-title"><i class="fas fa-user"></i> Individual Students</div>';
             for (var j = 0; j < Math.min(matchedStudents.length, 15); j++) {
                 var s = matchedStudents[j];
                 html += '<div class="suggestion-item" data-type="student" data-name="' + s.chmsu_full_name + '">' +
                     '<div class="suggestion-icon student"><i class="fas fa-user"></i></div>' +
                     '<div><strong>' + s.chmsu_full_name + '</strong> ' +
-                    '<span class="suggestion-id">(' + s.chmsu_student_id + ')</span>' +
+                    '<span class="suggestion-id">(' + s.chmsu_student_id + (s.chmsu_course ? ' &bull; ' + s.chmsu_course : '') + ')</span>' +
                     (s.email ? '<span style="color: #27ae60; font-size: 9px;"> 📧</span>' : '') +
                     '</div></div>';
             }
         } else {
-            html = '<div class="suggestion-item" style="color: #999;">No students found</div>';
+            html = '<div class="suggestion-item" style="color: #999;">No individual students found</div>';
         }
     }
-    else if (mentionMode === 'section') {
+    else if (mentionMode === 'course_section') {
+        // Combined Program, Year & Section mode
+
+        // 1. Year Levels (Program + Year e.g. "BSIS 1" -> "BSIS - All 1st Year", placed AT THE TOP)
+        var cleanSearch = search.replace(/[^a-z0-9]/g, '');
+        var yearLevels = ['1', '2', '3', '4'];
+        var yearBatchItems = [];
+
+        if (courseFilter) {
+            yearLevels.forEach(function(yr) {
+                yearBatchItems.push({ course: courseFilter, year: yr });
+            });
+        } else {
+            if (cleanSearch.length > 0) {
+                // Match specific Program + Year combos first (e.g. "BSIS 1", "BSIS1", "BSIS")
+                courses.forEach(function(c) {
+                    yearLevels.forEach(function(yr) {
+                        yearBatchItems.push({ course: c.toUpperCase(), year: yr });
+                    });
+                });
+            }
+            // Also include "All Programs" year batches
+            yearLevels.forEach(function(yr) {
+                yearBatchItems.push({ course: '', year: yr });
+            });
+        }
+
+        var matchedYearBatches = yearBatchItems.filter(function(item) {
+            var yr = item.year;
+            var crs = item.course;
+            var yrSuffix = (yr === '1' ? '1st' : (yr === '2' ? '2nd' : (yr === '3' ? '3rd' : '4th')));
+            var alreadyAdded = selectedYears.some(function(x) { return x.year === yr && (x.course || '').toUpperCase() === crs; });
+            if (alreadyAdded) return false;
+
+            if (cleanSearch.length > 0) {
+                var comboShort = (crs + yr).toLowerCase().replace(/[^a-z0-9]/g, '');
+                var comboFull  = (crs + 'all' + yrSuffix + 'year').toLowerCase().replace(/[^a-z0-9]/g, '');
+                var comboYr    = (crs + yrSuffix + 'year').toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (crs) {
+                    return comboShort.indexOf(cleanSearch) !== -1 ||
+                           comboFull.indexOf(cleanSearch) !== -1 ||
+                           comboYr.indexOf(cleanSearch) !== -1;
+                } else {
+                    return yr === cleanSearch ||
+                           yrSuffix.indexOf(cleanSearch) !== -1 ||
+                           (yrSuffix + 'year').indexOf(cleanSearch) !== -1 ||
+                           ('all' + yrSuffix + 'year').indexOf(cleanSearch) !== -1;
+                }
+            }
+            return true;
+        });
+
+        if (matchedYearBatches.length > 0) {
+            html += '<div class="suggestion-section-title"><i class="fas fa-calendar-alt"></i> Year Levels (Whole Batch)</div>';
+            for (var y = 0; y < Math.min(matchedYearBatches.length, 12); y++) {
+                var yb = matchedYearBatches[y];
+                var yr = yb.year;
+                var crs = yb.course;
+                var yrSuffix = (yr === '1' ? '1st' : (yr === '2' ? '2nd' : (yr === '3' ? '3rd' : '4th')));
+                var progPrefix = crs ? crs + ' - ' : 'All Programs - ';
+                var countUnderYear = students.filter(function(s) {
+                    if (crs && (s.chmsu_course || '').toUpperCase() !== crs) return false;
+                    return String(s.chmsu_year) === yr;
+                }).length;
+                html += '<div class="suggestion-item" data-type="year" data-year="' + yr + '" data-course="' + crs + '">' +
+                    '<div class="suggestion-icon" style="background:#2980b9;"><i class="fas fa-calendar-alt"></i></div>' +
+                    '<div><strong>' + progPrefix + 'All ' + yrSuffix + ' Year</strong> ' +
+                    '<span class="suggestion-id">(' + countUnderYear + ' student' + (countUnderYear === 1 ? '' : 's') + ' &bull; Whole Year Batch)</span></div>' +
+                    '</div>';
+            }
+        }
+
+        // 2. Entire Programs
+        var matchedCourses = courses.filter(function(c) {
+            var courseStr = String(c).toLowerCase();
+            if (courseFilter && courseStr !== courseFilter.toLowerCase()) return false;
+            var alreadyAdded = selectedCourses.some(function(x) { return x.course === c; });
+            if (alreadyAdded) return false;
+            if (search.length > 0 && courseStr.indexOf(search) === -1) return false;
+            return true;
+        });
+
+        if (matchedCourses.length > 0) {
+            html += '<div class="suggestion-section-title"><i class="fas fa-graduation-cap"></i> Entire Program (All Students)</div>';
+            for (var k = 0; k < Math.min(matchedCourses.length, 10); k++) {
+                var c = matchedCourses[k];
+                var countUnderCourse = students.filter(function(s) {
+                    return (s.chmsu_course || '').toUpperCase() === c.toUpperCase();
+                }).length;
+                html += '<div class="suggestion-item" data-type="course" data-course="' + c + '">' +
+                    '<div class="suggestion-icon course"><i class="fas fa-graduation-cap"></i></div>' +
+                    '<div><strong>' + c + '</strong> ' +
+                    '<span class="suggestion-id">(' + countUnderCourse + ' student' + (countUnderCourse === 1 ? '' : 's') + ' &bull; Whole Program)</span></div>' +
+                    '</div>';
+            }
+        }
+
+        // 3. Sections
         var matchedSections = sections.filter(function(sec) {
-            var yearStr = String(sec.chmsu_year).toLowerCase();
-            var sectionStr = String(sec.section_name).toLowerCase();
+            var yearStr = String(sec.chmsu_year || '').toLowerCase();
+            var sectionStr = String(sec.section_name || '').toLowerCase();
             var courseStr = (sec.course_code || '').toLowerCase();
             var combined = yearStr + sectionStr;
+            var fullCombo = (courseStr + yearStr + sectionStr).replace(/[^a-z0-9]/g, '');
 
             if (courseFilter && courseStr !== courseFilter.toLowerCase()) return false;
 
@@ -1188,10 +1408,15 @@ document.getElementById('mentionSearch').addEventListener('input', function() {
             });
             if (alreadyAdded) return false;
 
-            return yearStr.indexOf(search) !== -1
-                || sectionStr.indexOf(search) !== -1
-                || combined.indexOf(search) !== -1
-                || courseStr.indexOf(search) !== -1;
+            if (search.length > 0) {
+                return yearStr.indexOf(search) !== -1
+                    || sectionStr.indexOf(search) !== -1
+                    || combined.indexOf(search) !== -1
+                    || courseStr.indexOf(search) !== -1
+                    || (cleanSearch && fullCombo.indexOf(cleanSearch) !== -1)
+                    || (cleanSearch && cleanSearch.indexOf(fullCombo) !== -1);
+            }
+            return true;
         });
 
         matchedSections.sort(function(a, b) {
@@ -1201,47 +1426,26 @@ document.getElementById('mentionSearch').addEventListener('input', function() {
         });
 
         if (matchedSections.length > 0) {
-            html += '<div class="suggestion-section-title"><i class="fas fa-layer-group"></i> Sections (Groups)</div>';
-            for (var i = 0; i < Math.min(matchedSections.length, 20); i++) {
+            html += '<div class="suggestion-section-title"><i class="fas fa-layer-group"></i> Specific Sections</div>';
+            for (var i = 0; i < Math.min(matchedSections.length, 25); i++) {
                 var sec = matchedSections[i];
                 var courseLabel = sec.course_code ? sec.course_code + ' - ' : '';
                 var label = courseLabel + sec.chmsu_year + 'th Year - ' + sec.section_name;
                 html += '<div class="suggestion-item" data-type="section" data-year="' + sec.chmsu_year + '" data-section="' + sec.section_name + '" data-course="' + (sec.course_code || '') + '">' +
                     '<div class="suggestion-icon section"><i class="fas fa-layer-group"></i></div>' +
-                    '<div><strong>' + label + '</strong> <span class="suggestion-id">(mention whole section)</span></div>' +
+                    '<div><strong>' + label + '</strong> <span class="suggestion-id">(section)</span></div>' +
                     '</div>';
             }
-        } else {
-            html = '<div class="suggestion-item" style="color: #999;">No sections found</div>';
+        }
+
+        if (matchedYearBatches.length === 0 && matchedCourses.length === 0 && matchedSections.length === 0) {
+            html = '<div class="suggestion-item" style="color: #999;">No matching program, year, or sections found</div>';
         }
     }
-    else if (mentionMode === 'course') {
-        var matchedCourses = courses.filter(function(c) {
-            var courseStr = String(c).toLowerCase();
-            if (courseFilter && courseStr !== courseFilter.toLowerCase()) return false;
-            var alreadyAdded = selectedCourses.some(function(x) { return x.course === c; });
-            if (alreadyAdded) return false;
-            return courseStr.indexOf(search) !== -1;
-        });
 
-        matchedCourses.sort();
-
-        if (matchedCourses.length > 0) {
-            html += '<div class="suggestion-section-title"><i class="fas fa-graduation-cap"></i> Courses</div>';
-            for (var k = 0; k < Math.min(matchedCourses.length, 20); k++) {
-                var c = matchedCourses[k];
-                var countUnderCourse = students.filter(function(s) {
-                    return (s.chmsu_course || '').toUpperCase() === c.toUpperCase();
-                }).length;
-                html += '<div class="suggestion-item" data-type="course" data-course="' + c + '">' +
-                    '<div class="suggestion-icon course"><i class="fas fa-graduation-cap"></i></div>' +
-                    '<div><strong>' + c + '</strong> ' +
-                    '<span class="suggestion-id">(' + countUnderCourse + ' student' + (countUnderCourse === 1 ? '' : 's') + ' — whole course)</span></div>' +
-                    '</div>';
-            }
-        } else {
-            html = '<div class="suggestion-item" style="color: #999;">No courses found</div>';
-        }
+    if (!html) {
+        suggestions.classList.remove('show');
+        return;
     }
 
     suggestions.innerHTML = html;
@@ -1250,7 +1454,9 @@ document.getElementById('mentionSearch').addEventListener('input', function() {
     suggestions.querySelectorAll('.suggestion-item').forEach(function(item) {
         item.addEventListener('click', function() {
             var type = this.dataset.type;
-            if (type === 'section') {
+            if (type === 'year') {
+                addYearMention(this.dataset.year, this.dataset.course);
+            } else if (type === 'section') {
                 addSectionMention(this.dataset.year, this.dataset.section, this.dataset.course);
             } else if (type === 'student') {
                 addMention(this.dataset.name);
@@ -1261,6 +1467,13 @@ document.getElementById('mentionSearch').addEventListener('input', function() {
             suggestions.classList.remove('show');
         });
     });
+}
+
+document.getElementById('mentionSearch').addEventListener('input', renderMentionSuggestions);
+document.getElementById('mentionSearch').addEventListener('focus', function() {
+    if (mentionMode === 'course_section') {
+        renderMentionSuggestions();
+    }
 });
 
 function addMention(name) {
@@ -1271,6 +1484,37 @@ function addMention(name) {
 
 function removeMention(name) {
     selectedMentions = selectedMentions.filter(function(m) { return m !== name; });
+    updateMentionTags();
+}
+
+function addYearMention(year, course) {
+    year = String(year);
+    course = (course || '').toUpperCase().trim();
+    var exists = selectedYears.some(function(x) { return x.year === year && (x.course || '') === course; });
+    if (exists) return;
+
+    var matchCount = students.filter(function(s) {
+        var studentCourse = (s.chmsu_course || '').toUpperCase();
+        return String(s.chmsu_year) === year && (!course || studentCourse === course);
+    }).length;
+
+    selectedYears.push({ year: year, course: course });
+    updateMentionTags();
+
+    if (matchCount === 0) {
+        var yrSuffix = (year === '1' ? '1st' : (year === '2' ? '2nd' : (year === '3' ? '3rd' : '4th')));
+        setTimeout(function() {
+            alert('Note: No active students currently found in ' + (course ? course + ' - ' : '') + yrSuffix + ' Year.');
+        }, 100);
+    }
+}
+
+function removeYear(year, course) {
+    year = String(year);
+    course = (course || '').toUpperCase().trim();
+    selectedYears = selectedYears.filter(function(x) {
+        return !(x.year === year && (x.course || '') === course);
+    });
     updateMentionTags();
 }
 
@@ -1328,7 +1572,7 @@ function addCourseMention(course) {
 
     if (matchCount === 0) {
         setTimeout(function() {
-            alert('Note: No active students currently found in course ' + course + '.');
+            alert('Note: No active students currently found in program ' + course + '.');
         }, 100);
     }
 }
@@ -1343,23 +1587,37 @@ function updateMentionTags() {
     var container = document.getElementById('mentionTagsContainer');
     var hiddenStudents = document.getElementById('mentionedStudents');
     var hiddenSections = document.getElementById('mentionedSections');
-    var hiddenCourses = document.getElementById('mentionedCourses');
+    var hiddenCourses  = document.getElementById('mentionedCourses');
+    var hiddenYears    = document.getElementById('mentionedYears');
 
     container.innerHTML = '';
 
-    if (selectedMentions.length === 0 && selectedSections.length === 0 && selectedCourses.length === 0) {
+    if (selectedMentions.length === 0 && selectedSections.length === 0 && selectedCourses.length === 0 && selectedYears.length === 0) {
         container.innerHTML = '<span style="color: #999; font-size: 11px;">No mentions yet</span>';
         hiddenStudents.value = '';
         hiddenSections.value = '';
-        hiddenCourses.value = '';
+        hiddenCourses.value  = '';
+        if (hiddenYears) hiddenYears.value = '';
         return;
+    }
+
+    for (var y = 0; y < selectedYears.length; y++) {
+        var yrItem = selectedYears[y];
+        var yrSuffix = (yrItem.year === '1' ? '1st' : (yrItem.year === '2' ? '2nd' : (yrItem.year === '3' ? '3rd' : '4th')));
+        var yLabel = (yrItem.course ? yrItem.course + ' - ' : '') + 'All ' + yrSuffix + ' Year';
+        var yTag = document.createElement('span');
+        yTag.className = 'mention-tag-item year-tag';
+        yTag.style.background = '#2980b9';
+        yTag.innerHTML = '<i class="fas fa-calendar-alt"></i> ' + yLabel +
+            '<span class="remove-mention" onclick="removeYear(\'' + yrItem.year + '\', \'' + (yrItem.course || '').replace(/'/g, "\\'") + '\')">&times;</span>';
+        container.appendChild(yTag);
     }
 
     for (var c = 0; c < selectedCourses.length; c++) {
         var cr = selectedCourses[c];
         var cTag = document.createElement('span');
         cTag.className = 'mention-tag-item course-tag';
-        cTag.innerHTML = '<i class="fas fa-graduation-cap"></i> ' + cr.course +
+        cTag.innerHTML = '<i class="fas fa-graduation-cap"></i> Program: ' + cr.course +
             '<span class="remove-mention" onclick="removeCourse(\'' + cr.course + '\')">&times;</span>';
         container.appendChild(cTag);
     }
@@ -1385,7 +1643,8 @@ function updateMentionTags() {
 
     hiddenStudents.value = selectedMentions.join('|||');
     hiddenSections.value = JSON.stringify(selectedSections);
-    hiddenCourses.value = JSON.stringify(selectedCourses);
+    hiddenCourses.value  = JSON.stringify(selectedCourses);
+    if (hiddenYears) hiddenYears.value = JSON.stringify(selectedYears);
 }
 
 document.addEventListener('click', function(e) {
@@ -1399,18 +1658,32 @@ document.addEventListener('click', function(e) {
 });
 
 document.getElementById('noteForm').addEventListener('submit', function(e) {
-    var selected = document.getElementById('mentionedStudents').value;
-    var sections = document.getElementById('mentionedSections').value;
-    var courses = document.getElementById('mentionedCourses').value;
+    var hasStudents = selectedMentions.length > 0;
+    var hasGroup = selectedSections.length > 0 || selectedCourses.length > 0 || selectedYears.length > 0;
 
-    var hasStudents = selected && selected.trim() !== '';
-    var hasSections = sections && sections !== '[]' && sections.trim() !== '';
-    var hasCourses = courses && courses !== '[]' && courses.trim() !== '';
-
-    if (!hasStudents && !hasSections && !hasCourses) {
+    // STRICT WARNING IF BOTH INDIVIDUAL AND GROUP ARE SELECTED
+    if (hasStudents && hasGroup) {
         e.preventDefault();
-        alert('Please mention at least one student, section, or course.');
+        alert('Warning: Cannot mention both individual students and group (program/year/section) together. Please add only one, not both.');
         return false;
+    }
+
+    if (mentionMode === 'student') {
+        document.getElementById('mentionedSections').value = '';
+        document.getElementById('mentionedCourses').value = '';
+        if (document.getElementById('mentionedYears')) document.getElementById('mentionedYears').value = '';
+        if (!hasStudents) {
+            e.preventDefault();
+            alert('Please mention at least one individual student.');
+            return false;
+        }
+    } else {
+        document.getElementById('mentionedStudents').value = '';
+        if (!hasGroup) {
+            e.preventDefault();
+            alert('Please select at least one program, year level, or section to mention.');
+            return false;
+        }
     }
 
     return true;
@@ -1464,6 +1737,13 @@ function applyFeedSearch() {
     if (nm) nm.classList.toggle('hidden', shown !== 0);
 }
 document.getElementById('feedSearch').addEventListener('input', applyFeedSearch);
+
+document.addEventListener('DOMContentLoaded', function() {
+    var hl = document.querySelector('.highlighted-student-target');
+    if (hl) {
+        hl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+});
 </script>
 
 </body>
